@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "timekeeping.h"
+
 #define LEDPORT				(GPIOB)
 #define LEDPIN				(GPIO5)
 

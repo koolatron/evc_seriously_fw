@@ -266,9 +266,11 @@ static void _set_digit(uint8_t value) {
 }
 
 int main(void) {
-	uint8_t grid_duty_cycle = 0;
-	uint32_t ms = 0;
-	uint8_t secs = 0;
+	uint8_t display_digit = 0;
+	uint8_t display_digit_next = 0;
+
+	stime_t time = { .milliseconds = 0, .seconds = 0, .minutes = 0, .hours = 0,
+					 .days = 0, .months = 0, .years = 0 };
 
 	clock_setup();
 	gpio_setup();
@@ -292,19 +294,70 @@ int main(void) {
         if (isr_flag) {
 			isr_flag = 0;
 
+			time.milliseconds++;
+			srtc_update(&time);
+
 		    // Toggle LED GPIO
-			if (++ms > 1000) {
-				ms = 0;
-
+			if (time.milliseconds == 0) {
 	    	    gpio_toggle(LEDPORT, LEDPIN);
-				grid_duty_cycle %= 100;
-				grid_duty_cycle += 10;
-				_set_grid_duty_cycle(grid_duty_cycle);
-				_set_digit(secs++ % 10);
+				_set_grid_duty_cycle((time.seconds % 10) * 10);
 
+				display_digit = display_digit_next;
+				display_digit_next = (display_digit + 1) % 10;
 #ifdef ENABLE_DEBUG_USART
-				fprintf(fp, "grid_duty_cycle: %d\n", grid_duty_cycle);
-#endif // ENABLE_DEBUG_UART
+//				fprintf(fp, "grid_duty_cycle: %d\n", grid_duty_cycle);
+				fprintf(fp, "display_digit: %d\n", display_digit);
+#endif
+			}
+
+			// transition to the next digit
+			// todo: generalize this, it's uuuugly
+			if (time.milliseconds > 250) {
+				_set_digit(display_digit_next);
+			} else {
+				if (time.milliseconds < 25) {
+					if (time.milliseconds % 10 < 2) {
+						_set_digit(display_digit_next);
+					} else {
+						_set_digit(display_digit);
+					}
+				} else if (time.milliseconds < 50) {
+					if (time.milliseconds % 10 < 3) {
+						_set_digit(display_digit_next);
+					} else {
+						_set_digit(display_digit);
+					}
+				} else if (time.milliseconds < 75) {
+					if (time.milliseconds % 10 < 4) {
+						_set_digit(display_digit_next);
+					} else {
+						_set_digit(display_digit);
+					}
+				} else if (time.milliseconds < 100) {
+					if (time.milliseconds % 10 < 5) {
+						_set_digit(display_digit_next);
+					} else {
+						_set_digit(display_digit);
+					}
+				} else if (time.milliseconds < 125) {
+					if (time.milliseconds % 10 < 6) {
+						_set_digit(display_digit_next);
+					} else {
+						_set_digit(display_digit);
+					}
+				} else if (time.milliseconds < 150) {
+					if (time.milliseconds % 10 < 7) {
+						_set_digit(display_digit_next);
+					} else {
+						_set_digit(display_digit);
+					}
+				} else if (time.milliseconds < 175) {
+					if (time.milliseconds % 10 < 8) {
+						_set_digit(display_digit_next);
+					} else {
+						_set_digit(display_digit);
+					}
+				}
 			}
 		}
 	}
