@@ -269,6 +269,10 @@ int main(void) {
 	uint8_t display_digit = 0;
 	uint8_t display_digit_next = 0;
 
+	uint16_t current_step = 0;
+	uint16_t n_transition_steps = 10;
+	uint16_t t_step_period = 20;
+
 	stime_t time = { .milliseconds = 0, .seconds = 0, .minutes = 0, .hours = 0,
 					 .days = 0, .months = 0, .years = 0 };
 
@@ -304,59 +308,23 @@ int main(void) {
 
 				display_digit = display_digit_next;
 				display_digit_next = (display_digit + 1) % 10;
+
+				current_step = 0;
 #ifdef ENABLE_DEBUG_USART
 //				fprintf(fp, "grid_duty_cycle: %d\n", grid_duty_cycle);
 				fprintf(fp, "display_digit: %d\n", display_digit);
 #endif
 			}
 
-			// transition to the next digit
-			// todo: generalize this, it's uuuugly
-			if (time.milliseconds > 250) {
-				_set_digit(display_digit_next);
-			} else {
-				if (time.milliseconds < 25) {
-					if (time.milliseconds % 10 < 2) {
-						_set_digit(display_digit_next);
-					} else {
-						_set_digit(display_digit);
-					}
-				} else if (time.milliseconds < 50) {
-					if (time.milliseconds % 10 < 3) {
-						_set_digit(display_digit_next);
-					} else {
-						_set_digit(display_digit);
-					}
-				} else if (time.milliseconds < 75) {
-					if (time.milliseconds % 10 < 4) {
-						_set_digit(display_digit_next);
-					} else {
-						_set_digit(display_digit);
-					}
-				} else if (time.milliseconds < 100) {
-					if (time.milliseconds % 10 < 5) {
-						_set_digit(display_digit_next);
-					} else {
-						_set_digit(display_digit);
-					}
-				} else if (time.milliseconds < 125) {
-					if (time.milliseconds % 10 < 6) {
-						_set_digit(display_digit_next);
-					} else {
-						_set_digit(display_digit);
-					}
-				} else if (time.milliseconds < 150) {
-					if (time.milliseconds % 10 < 7) {
-						_set_digit(display_digit_next);
-					} else {
-						_set_digit(display_digit);
-					}
-				} else if (time.milliseconds < 175) {
-					if (time.milliseconds % 10 < 8) {
-						_set_digit(display_digit_next);
-					} else {
-						_set_digit(display_digit);
-					}
+			if ( time.milliseconds < ( n_transition_steps * t_step_period ) ) {
+				current_step = time.milliseconds / t_step_period;
+			}
+
+			if ( time.milliseconds > ( current_step * t_step_period ) ) {
+				if ( ( time.milliseconds % n_transition_steps ) > current_step ) {
+					_set_digit(display_digit);
+				} else {
+					_set_digit(display_digit_next);
 				}
 			}
 		}
