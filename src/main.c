@@ -23,6 +23,18 @@
 
 static void clock_setup(void)
 {
+	rcc_osc_bypass_enable(RCC_HSE);
+	rcc_osc_on(RCC_HSE);
+	rcc_wait_for_osc_ready(RCC_HSE);
+	rcc_set_sysclk_source(RCC_HSE);
+
+	rcc_apb1_frequency = 25000000;
+	rcc_apb2_frequency = 25000000;
+	rcc_ahb_frequency = 25000000;
+
+	// TODO: Set flash wait states?  This seems to work without any tinkering,
+	// 		 but it might be an important stability/reliability thing.
+
 	// Enable peripheral clock to gpio ports A, B, F
 	rcc_periph_clock_enable(RCC_GPIOA);
 	rcc_periph_clock_enable(RCC_GPIOB);
@@ -31,13 +43,11 @@ static void clock_setup(void)
 	// Enable peripheral clock to timer2
 	rcc_periph_clock_enable(RCC_TIM2);
 
-#ifdef ENABLE_DEBUG_USART
 	// Enable peripheral clock to usart1
 	rcc_periph_clock_enable(RCC_USART1);
-#else
+
 	// Enable peripheral clock to i2c1
 	rcc_periph_clock_enable(RCC_I2C1);
-#endif // ENABLE_DEBUG_USART
 }
 
 static void gpio_setup(void)
@@ -70,26 +80,21 @@ static void gpio_setup(void)
 	gpio_set_af(FILPORT, GPIO_AF10, FILPIN);
 	gpio_set_output_options(FILPORT, GPIO_OTYPE_PP, GPIO_OSPEED_2MHZ, FILPIN);
 
-#ifdef ENABLE_DEBUG_USART
 	// configure USART port IOs (AF7: USART1_RX, USART1_TX)
-	gpio_mode_setup(USARTPORT, GPIO_MODE_AF, GPIO_PUPD_NONE, USARTPIN_RX);
-	gpio_mode_setup(USARTPORT, GPIO_MODE_AF, GPIO_PUPD_NONE, USARTPIN_TX);
-	gpio_set_output_options(USARTPORT, GPIO_OTYPE_OD, GPIO_OSPEED_100MHZ, USARTPIN_RX);
-	gpio_set_output_options(USARTPORT, GPIO_OTYPE_OD, GPIO_OSPEED_100MHZ, USARTPIN_TX);
-	gpio_set_af(USARTPORT, GPIO_AF7, USARTPIN_RX);
-	gpio_set_af(USARTPORT, GPIO_AF7, USARTPIN_TX);
-#else
+	gpio_mode_setup(USARTPORT_RX, GPIO_MODE_AF, GPIO_PUPD_NONE, USARTPIN_RX);
+	gpio_mode_setup(USARTPORT_TX, GPIO_MODE_AF, GPIO_PUPD_NONE, USARTPIN_TX);
+	gpio_set_af(USARTPORT_RX, GPIO_AF7, USARTPIN_RX);
+	gpio_set_af(USARTPORT_TX, GPIO_AF7, USARTPIN_TX);
+
 	// configure I2C port IOs (AF2: I2C1_SCL, I2C1_SDA)
-	gpio_mode_setup(I2CPORT, GPIO_MODE_AF, GPIO_PUPD_NONE, I2CPIN_SCL);
-	gpio_mode_setup(I2CPORT, GPIO_MODE_AF, GPIO_PUPD_NONE, I2CPIN_SDA);
-	gpio_set_output_options(I2CPORT, GPIO_OTYPE_OD, GPIO_OSPEED_100MHZ, I2CPIN_SCL);
-	gpio_set_output_options(I2CPORT, GPIO_OTYPE_OD, GPIO_OSPEED_100MHZ, I2CPIN_SDA);
-    gpio_set_af(I2CPORT, GPIO_AF4, I2CPIN_SCL);
-    gpio_set_af(I2CPORT, GPIO_AF4, I2CPIN_SDA);
-#endif // ENABLE_DEBUG_USART
+	gpio_mode_setup(I2CPORT_SCL, GPIO_MODE_AF, GPIO_PUPD_NONE, I2CPIN_SCL);
+	gpio_mode_setup(I2CPORT_SDA, GPIO_MODE_AF, GPIO_PUPD_NONE, I2CPIN_SDA);
+	gpio_set_output_options(I2CPORT_SCL, GPIO_OTYPE_OD, GPIO_OSPEED_100MHZ, I2CPIN_SCL);
+	gpio_set_output_options(I2CPORT_SDA, GPIO_OTYPE_OD, GPIO_OSPEED_100MHZ, I2CPIN_SDA);
+    gpio_set_af(I2CPORT_SCL, GPIO_AF4, I2CPIN_SCL);
+    gpio_set_af(I2CPORT_SDA, GPIO_AF4, I2CPIN_SDA);
 }
 
-#ifdef ENABLE_DEBUG_USART
 static FILE* usart_setup(void)
 {
 	// Configure USART1: 9600 8N1
@@ -131,7 +136,7 @@ static ssize_t _iowr(void *_cookie, const char *_buf, size_t _n)
 	};
 	return written;
 }
-#else
+
 static void i2c_setup(void) {
 	i2c_reset(I2C1);
 	i2c_peripheral_disable(I2C1);
@@ -142,7 +147,6 @@ static void i2c_setup(void) {
 	// Enable I2C1 peripheral
 	i2c_peripheral_enable(I2C1);
 }
-#endif // ENABLE_DEBUG_USART
 
 static void timer_setup(void)
 {
@@ -153,7 +157,7 @@ static void timer_setup(void)
 	timer_set_mode(TIM2, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 
 	// Set the prescaler to (peripheral clock frequency / 1000000) - 1 , so it'll tick at 1MHz
-	// for a peripheral clock of 8MHz, this makes the prescaler 7
+	// for a peripheral clock of 25MHz, this makes the prescaler 24
 	timer_set_prescaler(TIM2, (rcc_apb1_frequency / 1000000) - 1);
 
 	// Set the timer period to 100 so we'll overflow every 200us, making the overflow frequency 5kHz
@@ -201,8 +205,8 @@ static void timer_setup(void)
 }
 
 static void systick_setup(void) {
-	systick_set_clocksource(STK_CSR_CLKSOURCE_AHB_DIV8); // 1MHz
-	systick_set_reload(999); // period = 1000, so we overflow at 1kHz
+	systick_set_clocksource(STK_CSR_CLKSOURCE_AHB); // 25MHz
+	systick_set_reload(24999); // period = 25000, so we overflow at 1kHz
 	systick_interrupt_enable();
 	systick_counter_enable();
 }
@@ -265,13 +269,77 @@ static void _set_digit(uint8_t value) {
 	}
 }
 
+/* This function's job is to ensure that transitions between digits are as smooth as
+ * possible.  It does this by computing the sequence of length (l) with (n) bits set,
+ * for which the average transition density is maximized. It then returns position (p)
+ * of the computed sequence.
+ * 
+ * For example, with l=7, n=3, p=1, the computed sequence is 0010101 (or a rotation 
+ * thereof) and the returned value is 0.  For l=7, n=4, p=1, the computed sequence is
+ * 1010101 (or a rotation thereof) and the returned value is 1.
+ * 
+ * The digit transition function works on chunks of (l) one-millisecond timeslices.
+ * Each chunk will have a given target of 'on' time (n). Once we've computed this
+ * sequence, we can use it to time the digit transitions in a way that produces the
+ * least possible amount of flicker for a particular (l) and (n).
+ * 
+ * I don't know what this operation is called - I suppose it's some sort of one-
+ * dimensional (temporal) dithering.
+ * 
+ * TODO: Rewrite this with floating point?  Does anyone care?
+ */
+static uint8_t _select_digit( uint8_t length, uint8_t set_bits, uint8_t pos ) {
+	uint8_t gap_mod = length % set_bits;
+	uint8_t gap_base = ( ( length - set_bits ) - gap_mod ) / set_bits;
+
+	uint8_t accum_mod = gap_mod;
+	uint8_t accum_base = gap_base;
+
+	uint8_t digit = 0;
+
+	// Degenerate cases
+	if ( set_bits == 0 ) {
+		return 0;
+	}
+
+	if ( set_bits == length ) {
+		return 1;
+	}
+
+	for (;;) {
+		if ( accum_base == 0 ) {
+			digit = 1;
+			accum_mod  += gap_mod;
+			accum_base += gap_base;
+		} else {
+			digit = 0;
+			accum_base--;
+		}
+
+		if ( --pos == 0 ) {
+			return digit;
+		}
+
+		if ( accum_mod >= set_bits ) {
+			digit = 0;
+			accum_mod -= set_bits;
+
+			if ( --pos == 0 ) {
+				return digit;
+			}
+		}
+	}
+}
+
 int main(void) {
 	uint8_t display_digit = 0;
 	uint8_t display_digit_next = 0;
 
-	uint16_t current_step = 0;
-	uint16_t n_transition_steps = 10;
-	uint16_t t_step_period = 20;
+	uint16_t current_position = 0;		// the current bit position within current brightness step
+	uint16_t current_step = 0;			// the current brightness step
+	uint16_t n_transition_steps = 20;	// number of discrete brightness levels per transition
+	uint16_t t_step_period = 20;		// length in milliseconds of each brightness step
+										// n_transition_steps must be >= t_step_period
 
 	stime_t time = { .milliseconds = 0, .seconds = 0, .minutes = 0, .hours = 0,
 					 .days = 0, .months = 0, .years = 0 };
@@ -280,18 +348,21 @@ int main(void) {
 	gpio_setup();
     timer_setup();
 	systick_setup();
+	i2c_setup();
 
-#ifdef ENABLE_DEBUG_USART
 	FILE *fp;
 	fp = usart_setup();
-#else
-	i2c_setup();
-#endif // ENABLE_DEBUG_USART
+
+	fprintf(fp, "Starting up\n");
 
 	// Light everything up
 	gpio_set(SEGPORT, SEGPIN_ALL);
 	gpio_set(EN5VPORT, EN5VPIN);
 	gpio_set(ENI2CPORT, ENI2CPIN);
+
+	gpio_set(LEDPORT, LEDPIN);
+
+	fprintf(fp, "Startup complete\n");
 
     // Spin forever
 	while (1) {
@@ -310,21 +381,19 @@ int main(void) {
 				display_digit_next = (display_digit + 1) % 10;
 
 				current_step = 0;
-#ifdef ENABLE_DEBUG_USART
-//				fprintf(fp, "grid_duty_cycle: %d\n", grid_duty_cycle);
-				fprintf(fp, "display_digit: %d\n", display_digit);
-#endif
+//				fprintf(fp, "[%02d] Tick\n", time.seconds);
 			}
 
 			if ( time.milliseconds < ( n_transition_steps * t_step_period ) ) {
-				current_step = time.milliseconds / t_step_period;
-			}
+				current_step = ( ( time.milliseconds - ( time.milliseconds % t_step_period ) ) / t_step_period ) + 1;
+				current_position = ( time.milliseconds % t_step_period ) + 1;
 
-			if ( time.milliseconds > ( current_step * t_step_period ) ) {
-				if ( ( time.milliseconds % n_transition_steps ) > current_step ) {
-					_set_digit(display_digit);
+				uint8_t n_bits = ( t_step_period / n_transition_steps ) * current_step;
+
+				if ( _select_digit( t_step_period, n_bits, current_position ) ) {
+					_set_digit( display_digit_next );
 				} else {
-					_set_digit(display_digit_next);
+					_set_digit( display_digit );
 				}
 			}
 		}

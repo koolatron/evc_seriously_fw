@@ -36,17 +36,19 @@
 #define ENI2CPORT			(GPIOA)
 #define ENI2CPIN			(GPIO11)
 
-#define I2CPORT				(GPIOB)
-#define I2CPIN_SCL			(GPIO6)
+#define I2CPORT_SCL			(GPIOA)
+#define I2CPIN_SCL			(GPIO15)
+
+#define I2CPORT_SDA			(GPIOB)
 #define I2CPIN_SDA			(GPIO7)
 
-#define USARTPORT           (GPIOB)
+#define USARTPORT_TX        (GPIOB)
 #define USARTPIN_TX         (GPIO6)
-#define USARTPIN_RX         (GPIO7)
+
+#define USARTPORT_RX        (GPIOA)
+#define USARTPIN_RX         (GPIO10)
 
 #define ERR_ISR_TIMEOUT     (1<<31);
-
-#define ENABLE_DEBUG_USART
 
 volatile uint8_t isr_flag;
 volatile uint32_t status;
@@ -54,16 +56,14 @@ volatile uint32_t status;
 static void clock_setup(void);
 static void timer_setup(void);
 static void gpio_setup(void);
+static void i2c_setup(void);
 
-#ifdef ENABLE_DEBUG_USART
 static FILE *usart_setup(void);
 static ssize_t _iord(void *_cookie, char *_buf, size_t _n);
 static ssize_t _iowr(void *_cookie, const char *_buf, size_t _n);
-#else
-static void i2c_setup(void);
-#endif // ENABLE_DEBUG_USART
 
 static void _set_grid_duty_cycle(uint8_t duty_cycle);
 static void _set_digit(uint8_t value);
+static uint8_t _select_digit(uint8_t length, uint8_t set_bits, uint8_t pos);
 
 #endif // _MAIN_H
