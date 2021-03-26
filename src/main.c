@@ -381,6 +381,10 @@ int main(void) {
 				display_digit_next = (display_digit + 1) % 10;
 
 				current_step = 0;
+
+// XXX: This stalls the main loop long enough to miss timekeeping ticks.  The
+//		real fix here is to move timekeeping-critical code to the systick ISR,
+//		but disabling debug printing is good enough for now.
 //				fprintf(fp, "[%02d] Tick\n", time.seconds);
 			}
 
