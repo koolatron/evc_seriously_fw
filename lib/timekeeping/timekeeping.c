@@ -1,6 +1,6 @@
 #include "timekeeping.h"
 
-void srtc_update(stime_t* time) {
+void srtc_update(volatile stime_t* time) {
     if ( time->milliseconds >= 1000 ) {
         time->milliseconds %= 1000;
         time->seconds++;

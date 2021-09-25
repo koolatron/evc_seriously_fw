@@ -61,6 +61,9 @@ static void gpio_setup(void)
 	// configure presence sense GPIO
 	gpio_mode_setup(SENSEPORT, GPIO_MODE_INPUT, GPIO_PUPD_NONE, SENSEPIN);
 
+	// configure presence signal GPIO
+	gpio_mode_setup(SIGNALPORT, GPIO_MODE_OUTPUT, GPIO_PUPD_PULLDOWN, SIGNALPIN);
+
 	// configure segment GPIOs
 	gpio_mode_setup(SEGPORT, GPIO_MODE_OUTPUT, GPIO_PUPD_PULLDOWN, SEGPIN_ALL);
 
@@ -86,7 +89,7 @@ static void gpio_setup(void)
 	gpio_set_af(USARTPORT_RX, GPIO_AF7, USARTPIN_RX);
 	gpio_set_af(USARTPORT_TX, GPIO_AF7, USARTPIN_TX);
 
-	// configure I2C port IOs (AF2: I2C1_SCL, I2C1_SDA)
+	// configure I2C port IOs (AF4: I2C1_SCL, I2C1_SDA)
 	gpio_mode_setup(I2CPORT_SCL, GPIO_MODE_AF, GPIO_PUPD_NONE, I2CPIN_SCL);
 	gpio_mode_setup(I2CPORT_SDA, GPIO_MODE_AF, GPIO_PUPD_NONE, I2CPIN_SDA);
 	gpio_set_output_options(I2CPORT_SCL, GPIO_OTYPE_OD, GPIO_OSPEED_100MHZ, I2CPIN_SCL);
@@ -97,8 +100,8 @@ static void gpio_setup(void)
 
 static FILE* usart_setup(void)
 {
-	// Configure USART1: 9600 8N1
-	usart_set_baudrate(USART1, 9600);
+	// Configure USART1: 115200 8N1
+	usart_set_baudrate(USART1, 115200);
 	usart_set_databits(USART1, 8);
 	usart_set_stopbits(USART1, USART_STOPBITS_1);
 	usart_set_mode(USART1, USART_MODE_TX);
@@ -138,11 +141,20 @@ static ssize_t _iowr(void *_cookie, const char *_buf, size_t _n)
 }
 
 static void i2c_setup(void) {
+	nvic_enable_irq(NVIC_I2C1_EV_EXTI23_IRQ);
+
 	i2c_reset(I2C1);
 	i2c_peripheral_disable(I2C1);
 
 	// Assuming the defaults work here
 	i2c_set_speed(I2C1, i2c_speed_sm_100k, 8);
+	i2c_set_own_7bit_slave_address(I2C1, I2C_DEFAULT_ADDR);
+
+	// There's a bug in libopencm3 that doesn't set this correctly, which is why we're
+	// doing it here.
+	I2C_OAR1(I2C1) |= I2C_OAR1_OA1EN_ENABLE;
+
+	i2c_enable_interrupt(I2C1, I2C_CR1_NACKIE | I2C_CR1_STOPIE | I2C_CR1_RXIE | I2C_CR1_TXIE | I2C_CR1_ADDRIE);
 
 	// Enable I2C1 peripheral
 	i2c_peripheral_enable(I2C1);
@@ -209,10 +221,6 @@ static void systick_setup(void) {
 	systick_set_reload(24999); // period = 25000, so we overflow at 1kHz
 	systick_interrupt_enable();
 	systick_counter_enable();
-}
-
-void sys_tick_handler(void) {
-	isr_flag = 1;
 }
 
 static void _set_grid_duty_cycle(uint8_t duty_cycle) {
@@ -331,7 +339,60 @@ static uint8_t _select_digit( uint8_t length, uint8_t set_bits, uint8_t pos ) {
 	}
 }
 
+void sys_tick_handler(void) {
+	isr_flag = 1;
+
+	time.milliseconds++;
+	srtc_update(&time);
+}
+
+void i2c1_ev_exti23_isr(void) {
+	i2c_flag = 1;
+
+	uint32_t isr = I2C_ISR(I2C1);
+
+	if (isr & I2C_ISR_ADDR) {
+		read_ptr = buf;
+		read_bytes = 0;
+
+		// clear address match
+		I2C_ICR(I2C1) |= I2C_ICR_ADDRCF;
+	}
+	else if (isr & I2C_ISR_RXNE) {
+		if (read_bytes > 3)
+			return;
+		*read_ptr++ = I2C_RXDR(I2C1) & 0xff;
+		read_bytes++;
+	}
+	else if (isr & I2C_ISR_TXIS) {
+		I2C_TXDR(I2C1) = val;
+	}
+	else if (isr & I2C_ISR_STOPF) {
+		i2c_peripheral_enable(I2C1);
+
+		if (buf[0] == 0x01)
+			val = buf[1] + buf[2];
+
+		// clear TXDR - we can't write to it once it's got a value in it
+		I2C_ISR(I2C1) |= I2C_ISR_TXE;
+
+		// clear stop flag
+		I2C_ICR(I2C1) |= I2C_ICR_STOPCF; 
+	}
+	else if ( isr & I2C_ISR_NACKF ) {
+		I2C_ICR(I2C1) |= I2C_ICR_NACKCF;
+	}
+}
+
+void i2c1_er_isr(void) {
+	i2c_flag = 1;
+}
+
 int main(void) {
+	uint8_t state = S_UNKNOWN;
+	uint8_t role = R_UNKNOWN;
+	uint16_t temp = 0;
+
 	uint8_t display_digit = 0;
 	uint8_t display_digit_next = 0;
 
@@ -340,10 +401,6 @@ int main(void) {
 	uint16_t n_transition_steps = 20;	// number of discrete brightness levels per transition
 	uint16_t t_step_period = 20;		// length in milliseconds of each brightness step
 										// n_transition_steps must be >= t_step_period
-
-	stime_t time = { .milliseconds = 0, .seconds = 0, .minutes = 0, .hours = 0,
-					 .days = 0, .months = 0, .years = 0 };
-
 	clock_setup();
 	gpio_setup();
     timer_setup();
@@ -353,24 +410,134 @@ int main(void) {
 	FILE *fp;
 	fp = usart_setup();
 
-	fprintf(fp, "Starting up\n");
+	state = S_CONF;
 
+	fprintf(fp, "[init] Starting init\n");
+
+/*
 	// Light everything up
-	gpio_set(SEGPORT, SEGPIN_ALL);
-	gpio_set(EN5VPORT, EN5VPIN);
-	gpio_set(ENI2CPORT, ENI2CPIN);
+	gpio_set(SEGPORT, SEGPIN_ALL);			// Enable all segments
+	gpio_set(EN5VPORT, EN5VPIN);			// Enable 5V regulator
+	gpio_set(SIGNALPORT, SIGNALPIN);		// Enable presence detect
+	gpio_set(LEDPORT, LEDPIN);				// Turn on user LED
 
-	gpio_set(LEDPORT, LEDPIN);
+	gpio_clear(ENI2CPORT, ENI2CPIN);		// Ensure I2C buffer is disabled
 
-	fprintf(fp, "Startup complete\n");
+	fprintf(fp, "[init] Port init complete\n");
 
-    // Spin forever
-	while (1) {
-        if (isr_flag) {
+	// Wait for a second to see if another board has control; all configuration should
+	// be complete during this period, so if this times out, this controller will
+	// select itself as the leader
+	temp = time.milliseconds - 1;
+
+	while (temp != time.milliseconds) {
+		if (isr_flag) {
 			isr_flag = 0;
 
-			time.milliseconds++;
-			srtc_update(&time);
+			if (gpio_get(SENSEPORT, SENSEPIN)) {
+				fprintf(fp, "[init] Cohort detected (%d)\n", time.milliseconds - temp);
+				role = R_COHORT;
+				temp = time.milliseconds;
+			}
+		}
+	}
+
+#ifdef DEBUG_ROLE_COHORT
+	fprintf(fp, "[debug] Forcing role to R_COHORT\n");
+	role = R_COHORT;
+#endif
+
+	if (role == R_UNKNOWN) {
+		fprintf(fp, "[init] No cohort detected, assuming leader role\n");
+		role = R_LEADER;
+	}
+
+	// Clear the presence detect signal; this'll be used in a moment to instruct individual nodes
+	// to turn on their I2C buffers so they can be configured
+	gpio_clear(SIGNALPORT, SIGNALPIN);
+
+	fprintf(fp, "[init] Role selection complete (%d)\n", role);
+
+	if (role == R_LEADER) {
+		i2c_set_7bit_address(I2C1, I2C_LEADER_ADDR);
+
+		fprintf(fp, "[init] I2C address set to 0x%02x\n", I2C_LEADER_ADDR);
+	} else {
+		//i2c_set_own_7bit_slave_address(I2C1, I2C_DEFAULT_ADDR);
+		//i2c_enable_interrupt(I2C1, I2C_CR1_RXIE | I2C_CR1_ADDRIE);
+		//nvic_enable_irq(NVIC_I2C1_EV_EXTI23_IRQ);
+
+		fprintf(fp, "[init] I2C address set to 0x%02x\n", I2C_DEFAULT_ADDR);
+	}
+
+	if (role == R_LEADER) {
+		// This tells the next node up in the chain to turn on its I2C buffer so we can talk
+		// to it on the bus.  Since this is will be the first device (besides the leader) on
+		// the I2C bus, it'll have enumerated at address 0x7E.  Our first goal will be to assign
+		// it a new address and verify that we can still chat with it
+
+		fprintf(fp, "[init] Signaling cohort to enable I2C buffer\n");
+
+		// Lazy busy-wait
+		for (int i = 0; i < 10000; i++)
+			__asm__("nop");
+
+		gpio_set(SIGNALPORT, SIGNALPIN);
+
+		for (int i = 0; i < 10000; i++)
+			__asm__("nop");
+
+		gpio_clear(SIGNALPORT, SIGNALPIN);
+	}
+
+	if (role == R_COHORT) {
+		// Cohorts must wait until they recieve a signal on SENSEPIN before enabling their
+		// I2C buffers.  This allows the leader to assign new addresses one at a time without
+		// multiple I2C nodes listening at the same address
+
+		// The best way to do this is to assign a level-change interrupt to SENSEPIN and wait
+		// for it to trigger.  If you've read ahead, you'll know that's not what I've done
+
+		fprintf(fp, "[init] Waiting for I2C buffer-enable signal\n");
+
+#ifndef DEBUG_ROLE_COHORT
+		while(!gpio_get(SENSEPORT, SENSEPIN)) {
+			for (int i = 0; i < 1000; i++)
+				__asm__("nop");			
+		}
+#endif
+
+		gpio_set(ENI2CPORT, ENI2CPIN);
+
+		fprintf(fp, "[init] Enabled I2C buffer\n");
+	} else {
+		// Leader sits this one out
+		for (int i = 0; i < 10000; i++)
+			__asm__("nop");
+	}
+
+	// At this point, we're either the leader (with I2C address 0x0a) or a cohort (at 0x7e). This
+	// is mainly bootstrapping; once the first cohort at 0x7e has been assigned a real address,
+	// the leader can set them up using a loop using I2C commands
+*/
+
+	fprintf(fp, "[init] Init complete, starting runloop\n");
+
+	state = S_RUN;
+
+    // Main runloop
+	while (1) {
+		if (i2c_flag) {
+			fprintf(fp, "[i2c] i2c interrupt fired!\n");
+			fprintf(fp, "[i2c] i2c_flag: %d\n", i2c_flag);
+			fprintf(fp, "[i2c] val: %d\n", val);
+			fprintf(fp, "[i2c] I2C_ISR: 0x%08lx I2C_ICR: 0x%08lx I2C_TXDR: 0x%08lx\n", I2C_ISR(I2C1), I2C_ICR(I2C1), I2C_TXDR(I2C1));
+
+			i2c_flag = 0;
+		}
+
+        if (isr_flag) {
+			isr_flag = 0;
 
 		    // Toggle LED GPIO
 			if (time.milliseconds == 0) {
@@ -382,10 +549,9 @@ int main(void) {
 
 				current_step = 0;
 
-// XXX: This stalls the main loop long enough to miss timekeeping ticks.  The
-//		real fix here is to move timekeeping-critical code to the systick ISR,
-//		but disabling debug printing is good enough for now.
-//				fprintf(fp, "[%02d] Tick\n", time.seconds);
+				fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
+				fprintf(fp, "[i2c] val: %d\n", val);
+				fprintf(fp, "[i2c] I2C_ISR: 0x%08lx I2C_ICR: 0x%08lx I2C_TXDR: 0x%08lx\n", I2C_ISR(I2C1), I2C_ICR(I2C1), I2C_TXDR(I2C1));
 			}
 
 			if ( time.milliseconds < ( n_transition_steps * t_step_period ) ) {

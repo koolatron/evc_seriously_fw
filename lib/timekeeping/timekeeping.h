@@ -13,6 +13,6 @@ typedef struct stime_t {
     uint8_t years;
 } stime_t;
 
-void srtc_update(stime_t* time);
+void srtc_update(volatile stime_t* time);
 
 #endif
