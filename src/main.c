@@ -148,10 +148,9 @@ static void i2c_setup(void) {
 
 	// Assuming the defaults work here
 	i2c_set_speed(I2C1, i2c_speed_sm_100k, 8);
-	i2c_set_own_7bit_slave_address(I2C1, I2C_DEFAULT_ADDR);
+	i2c_set_own_7bit_slave_address(I2C1, I2C_DEFAULT_ADDRESS);
 
-	// There's a bug in libopencm3 that doesn't set this correctly, which is why we're
-	// doing it here.
+	// There's a bug in libopencm3 that doesn't set this correctly, which is why we're doing it here.
 	I2C_OAR1(I2C1) |= I2C_OAR1_OA1EN_ENABLE;
 
 	i2c_enable_interrupt(I2C1, I2C_CR1_NACKIE | I2C_CR1_STOPIE | I2C_CR1_RXIE | I2C_CR1_TXIE | I2C_CR1_ADDRIE);
@@ -370,8 +369,43 @@ void i2c1_ev_exti23_isr(void) {
 	else if (isr & I2C_ISR_STOPF) {
 		i2c_peripheral_enable(I2C1);
 
-		if (buf[0] == 0x01)
-			val = buf[1] + buf[2];
+		switch(buf[0]) {
+			case I2C_CMD_SET_ADDR:
+				// OA1EN_ENABLE must be cleared before we can update our own address
+				I2C_OAR1(I2C1) &= ~(I2C_OAR1_OA1EN_ENABLE);
+				i2c_set_own_7bit_slave_address(I2C1, buf[1]);
+				I2C_OAR1(I2C1) |= I2C_OAR1_OA1EN_ENABLE;
+				break;
+			case I2C_CMD_SET_INDEX:
+				root->node_index = buf[1];
+				break;
+			case I2C_CMD_GET_INDEX:
+				val = root->node_index;
+				break;
+			case I2C_CMD_SET_TRANSITION_TYPE:
+				root->transition_type = buf[1];
+				break;
+			case I2C_CMD_GET_TRANSITION_TYPE:
+				val = root->transition_type;
+				break;
+			case I2C_CMD_SET_DISPLAY_DATA:
+				root->display_data = buf[1];
+				break;
+			case I2C_CMD_GET_DISPLAY_DATA:
+				val = root->display_data;
+				break;
+			case I2C_CMD_SET_SIGNAL:
+				if (buf[1])
+					gpio_set(SIGNALPORT, SIGNALPIN);
+				else
+					gpio_clear(SIGNALPORT, SIGNALPIN);
+				break;
+			case I2C_CMD_GET_SIGNAL:
+				val = (uint8_t) gpio_get(SIGNALPORT, SIGNALPIN);
+				break;
+			default:
+				break;
+		}
 
 		// clear TXDR - we can't write to it once it's got a value in it
 		I2C_ISR(I2C1) |= I2C_ISR_TXE;
@@ -389,8 +423,8 @@ void i2c1_er_isr(void) {
 }
 
 int main(void) {
-	uint8_t state = S_UNKNOWN;
-	uint8_t role = R_UNKNOWN;
+	uint8_t state = STATE_UNKNOWN;
+	uint8_t role = ROLE_UNKNOWN;
 	uint16_t temp = 0;
 
 	uint8_t display_digit = 0;
@@ -410,11 +444,12 @@ int main(void) {
 	FILE *fp;
 	fp = usart_setup();
 
-	state = S_CONF;
+	root = add_node();
+
+	state = STATE_CONF;
 
 	fprintf(fp, "[init] Starting init\n");
 
-/*
 	// Light everything up
 	gpio_set(SEGPORT, SEGPIN_ALL);			// Enable all segments
 	gpio_set(EN5VPORT, EN5VPIN);			// Enable 5V regulator
@@ -436,20 +471,20 @@ int main(void) {
 
 			if (gpio_get(SENSEPORT, SENSEPIN)) {
 				fprintf(fp, "[init] Cohort detected (%d)\n", time.milliseconds - temp);
-				role = R_COHORT;
+				role = ROLE_COHORT;
 				temp = time.milliseconds;
 			}
 		}
 	}
 
 #ifdef DEBUG_ROLE_COHORT
-	fprintf(fp, "[debug] Forcing role to R_COHORT\n");
-	role = R_COHORT;
+	fprintf(fp, "[debug] Forcing role to ROLE_COHORT\n");
+	role = ROLE_COHORT;
 #endif
 
-	if (role == R_UNKNOWN) {
+	if (role == ROLE_UNKNOWN) {
 		fprintf(fp, "[init] No cohort detected, assuming leader role\n");
-		role = R_LEADER;
+		role = ROLE_LEADER;
 	}
 
 	// Clear the presence detect signal; this'll be used in a moment to instruct individual nodes
@@ -458,22 +493,24 @@ int main(void) {
 
 	fprintf(fp, "[init] Role selection complete (%d)\n", role);
 
-	if (role == R_LEADER) {
-		i2c_set_7bit_address(I2C1, I2C_LEADER_ADDR);
+	if (role == ROLE_LEADER) {
+		I2C_OAR1(I2C1) &= ~(I2C_OAR1_OA1EN_ENABLE);
+		i2c_set_7bit_address(I2C1, I2C_LEADER_ADDRESS);
+		I2C_OAR1(I2C1) |= I2C_OAR1_OA1EN_ENABLE;		
 
-		fprintf(fp, "[init] I2C address set to 0x%02x\n", I2C_LEADER_ADDR);
+		root->i2c_address = I2C_LEADER_ADDRESS;
+
+		fprintf(fp, "[init] I2C address set to 0x%02x\n", I2C_LEADER_ADDRESS);
 	} else {
-		//i2c_set_own_7bit_slave_address(I2C1, I2C_DEFAULT_ADDR);
-		//i2c_enable_interrupt(I2C1, I2C_CR1_RXIE | I2C_CR1_ADDRIE);
-		//nvic_enable_irq(NVIC_I2C1_EV_EXTI23_IRQ);
+		root->i2c_address = I2C_DEFAULT_ADDRESS;
 
-		fprintf(fp, "[init] I2C address set to 0x%02x\n", I2C_DEFAULT_ADDR);
+		fprintf(fp, "[init] I2C address set to 0x%02x\n", I2C_DEFAULT_ADDRESS);
 	}
 
-	if (role == R_LEADER) {
+	if (role == ROLE_LEADER) {
 		// This tells the next node up in the chain to turn on its I2C buffer so we can talk
 		// to it on the bus.  Since this is will be the first device (besides the leader) on
-		// the I2C bus, it'll have enumerated at address 0x7E.  Our first goal will be to assign
+		// the I2C bus, it'll have address I2C_DEFAULT_ADDRESS.  Our first goal will be to assign
 		// it a new address and verify that we can still chat with it
 
 		fprintf(fp, "[init] Signaling cohort to enable I2C buffer\n");
@@ -490,13 +527,12 @@ int main(void) {
 		gpio_clear(SIGNALPORT, SIGNALPIN);
 	}
 
-	if (role == R_COHORT) {
+	if (role == ROLE_COHORT) {
 		// Cohorts must wait until they recieve a signal on SENSEPIN before enabling their
 		// I2C buffers.  This allows the leader to assign new addresses one at a time without
 		// multiple I2C nodes listening at the same address
 
-		// The best way to do this is to assign a level-change interrupt to SENSEPIN and wait
-		// for it to trigger.  If you've read ahead, you'll know that's not what I've done
+		// Since this must only be done once during init, using a busy-wait is okay
 
 		fprintf(fp, "[init] Waiting for I2C buffer-enable signal\n");
 
@@ -516,14 +552,21 @@ int main(void) {
 			__asm__("nop");
 	}
 
-	// At this point, we're either the leader (with I2C address 0x0a) or a cohort (at 0x7e). This
-	// is mainly bootstrapping; once the first cohort at 0x7e has been assigned a real address,
-	// the leader can set them up using a loop using I2C commands
-*/
+	/*
+	 * At this point, we're either the leader (at I2C_LEADER_ADDRESS) or a cohort waiting to be
+	 * configured (at I2C_DEFAULT_ADDRESS).  The leader's job is to now ask the device at
+	 * I2C_DEFAULT_ADDRESS to do the following:
+	 * 1. Move to the next available I2C address
+	 * 2. Assign an index representing a physical position
+	 * 3. Set and then clear SIGNALPIN to put the next device on the bus
+	 *
+	 * The leader will repeat this process until a NACK is received at I2C_DEFAULT_ADDRESS, which
+	 * indicates that all available devices have been configured
+	 */
 
 	fprintf(fp, "[init] Init complete, starting runloop\n");
 
-	state = S_RUN;
+	state = STATE_RUN;
 
     // Main runloop
 	while (1) {
@@ -531,7 +574,7 @@ int main(void) {
 			fprintf(fp, "[i2c] i2c interrupt fired!\n");
 			fprintf(fp, "[i2c] i2c_flag: %d\n", i2c_flag);
 			fprintf(fp, "[i2c] val: %d\n", val);
-			fprintf(fp, "[i2c] I2C_ISR: 0x%08lx I2C_ICR: 0x%08lx I2C_TXDR: 0x%08lx\n", I2C_ISR(I2C1), I2C_ICR(I2C1), I2C_TXDR(I2C1));
+			fprintf(fp, "[i2c] I2C_ISR: 0x%08lx I2C_ICR: 0x%08lx I2C_OAR1: 0x%08lx\n", I2C_ISR(I2C1), I2C_ICR(I2C1), I2C_OAR1(I2C1));
 
 			i2c_flag = 0;
 		}
@@ -550,8 +593,7 @@ int main(void) {
 				current_step = 0;
 
 				fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
-				fprintf(fp, "[i2c] val: %d\n", val);
-				fprintf(fp, "[i2c] I2C_ISR: 0x%08lx I2C_ICR: 0x%08lx I2C_TXDR: 0x%08lx\n", I2C_ISR(I2C1), I2C_ICR(I2C1), I2C_TXDR(I2C1));
+				fprintf(fp, "[i2c] I2C_ISR: 0x%08lx I2C_ICR: 0x%08lx I2C_OAR1: 0x%08lx\n", I2C_ISR(I2C1), I2C_ICR(I2C1), I2C_OAR1(I2C1));
 			}
 
 			if ( time.milliseconds < ( n_transition_steps * t_step_period ) ) {

@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 #include "timekeeping.h"
+#include "ansible.h"
 
 #define DEBUG_ROLE_COHORT   1
 
@@ -53,32 +54,30 @@
 #define USARTPORT_RX        (GPIOA)
 #define USARTPIN_RX         (GPIO10)
 
-#define ERR_ISR_TIMEOUT     (1<<31);
-
 // State machine definitions
-#define S_UNKNOWN           0
-#define S_CONF              1
-#define S_RUN               2
+#define STATE_UNKNOWN       0x00
+#define STATE_CONF          0x01
+#define STATE_RUN           0x02
 
 // Role definitions
-#define R_UNKNOWN           0
-#define R_LEADER            1
-#define R_COHORT            2
-
-// I2C defines - these should be refactored somewhere else eventually
-#define I2C_LEADER_ADDR     0x0A
-#define I2C_DEFAULT_ADDR    0x32
+#define ROLE_UNKNOWN        0x00
+#define ROLE_LEADER         0x01
+#define ROLE_COHORT         0x02
 
 volatile uint8_t isr_flag;
 volatile uint8_t i2c_flag;
 volatile uint32_t status;
 volatile stime_t time;
 
-// More I2C crap - but it's working!
+// I2C buffers and such
 volatile uint8_t* read_ptr;
 volatile uint8_t read_bytes;
 volatile uint8_t buf[3];
 volatile uint8_t val;
+
+// Root node for device state.  The root node is always the local device,
+// and the only device with more than one entry in this list is the leader
+node_t* root;
 
 static void clock_setup(void);
 static void timer_setup(void);
