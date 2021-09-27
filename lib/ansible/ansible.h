@@ -8,6 +8,9 @@
 #define I2C_LEADER_ADDRESS          0x0A
 #define I2C_DEFAULT_ADDRESS         ( I2C_MAX_ADDRESS - 1 )
 
+#define I2C_TRANSFER_NACK           0x20
+#define I2C_TRANSFER_STOP           0x30
+
 #define I2C_CMD_SET_ADDR            0xaa
 #define I2C_CMD_SET_INDEX           0x02
 #define I2C_CMD_GET_INDEX           0x03

@@ -414,6 +414,9 @@ void i2c1_ev_exti23_isr(void) {
 		I2C_ICR(I2C1) |= I2C_ICR_STOPCF; 
 	}
 	else if ( isr & I2C_ISR_NACKF ) {
+		val = I2C_TRANSFER_NACK;
+
+		// clear nack flag
 		I2C_ICR(I2C1) |= I2C_ICR_NACKCF;
 	}
 }
@@ -483,7 +486,7 @@ int main(void) {
 #endif
 
 	if (role == ROLE_UNKNOWN) {
-		fprintf(fp, "[init] No cohort detected, assuming leader role\n");
+		fprintf(fp, "[init] No upstream cohort detected, assuming leader role\n");
 		role = ROLE_LEADER;
 	}
 
@@ -495,9 +498,7 @@ int main(void) {
 
 	if (role == ROLE_LEADER) {
 		I2C_OAR1(I2C1) &= ~(I2C_OAR1_OA1EN_ENABLE);
-		i2c_set_7bit_address(I2C1, I2C_LEADER_ADDRESS);
-		I2C_OAR1(I2C1) |= I2C_OAR1_OA1EN_ENABLE;		
-
+		i2c_set_own_7bit_slave_address(I2C1, I2C_LEADER_ADDRESS);
 		root->i2c_address = I2C_LEADER_ADDRESS;
 
 		fprintf(fp, "[init] I2C address set to 0x%02x\n", I2C_LEADER_ADDRESS);
@@ -553,16 +554,61 @@ int main(void) {
 	}
 
 	/*
-	 * At this point, we're either the leader (at I2C_LEADER_ADDRESS) or a cohort waiting to be
-	 * configured (at I2C_DEFAULT_ADDRESS).  The leader's job is to now ask the device at
-	 * I2C_DEFAULT_ADDRESS to do the following:
-	 * 1. Move to the next available I2C address
-	 * 2. Assign an index representing a physical position
-	 * 3. Set and then clear SIGNALPIN to put the next device on the bus
-	 *
-	 * The leader will repeat this process until a NACK is received at I2C_DEFAULT_ADDRESS, which
-	 * indicates that all available devices have been configured
+	 * At this point, this device will be in one of the following three states:
+	 * - Leader (at I2C_LEADER_ADDRESS)
+	 * - Cohort (at I2C_DEFAULT_ADDRESS) with its I2C buffer enabled, ready for configuration
+	 * - Cohort (at I2C_DEFAULT_ADDRESS) with its I2C buffer disabled, waiting to enable
+	 * 
+	 * The leader's job is now to do the following:
+	 * - Assign any waiting cohort the next available I2C address
+	 * - Assign an index representing a physical position
+	 * - Instruct cohort to set and then clear SIGNALPIN to put the next device on the bus
+	 * - Repeat until there are no more unconfigured cohorts
 	 */
+
+	if (role == ROLE_LEADER) {
+		fprintf(fp, "[init] Probing address 0x%02x for devices\n", I2C_DEFAULT_ADDRESS);
+
+		// cohort interrupts interfere with the leader sending this probe.  leader doesn't need
+		// anything but the nack interrupt anyhow
+		i2c_disable_interrupt(I2C1, I2C_CR1_STOPIE | I2C_CR1_RXIE | I2C_CR1_TXIE | I2C_CR1_ADDRIE);
+
+		// This is kinda piecemeal, and much of it is stolen from i2c_common_v2.c - however the
+		// library assumes that a device will be present and does no error checking; in order to
+		// probe for a device, we need to issue a speculative read to I2C_DEFAULT_ADDRESS and then
+		// wait to see whether the transaction generated a NACK, which we can check for		
+		i2c_set_7bit_address(I2C1, I2C_DEFAULT_ADDRESS);
+		i2c_set_read_transfer_dir(I2C1);
+		i2c_set_bytes_to_transfer(I2C1, 1);
+		i2c_enable_autoend(I2C1);
+		I2C_CR2(I2C1) |= I2C_CR2_START;
+
+		// stall for a few hundred nanoseconds to let the transaction begin
+		for (int i = 0; i < 50; i++)
+			__asm__("nop");
+
+		// wait until the transaction is complete
+		while(i2c_busy(I2C1));
+
+		if (val == I2C_TRANSFER_NACK) {
+			fprintf(fp, "[init] No device detected at 0x%02x\n", I2C_DEFAULT_ADDRESS);
+		} else {
+			fprintf(fp, "[init] Detected a device at 0x%02x, configuring\n", I2C_DEFAULT_ADDRESS);
+
+			buf[0] = I2C_CMD_SET_ADDR;
+			buf[1] = 0x0b;
+			i2c_transfer7(I2C1, I2C_DEFAULT_ADDRESS, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+
+			buf[0] = I2C_CMD_SET_DISPLAY_DATA;
+			buf[1] = 1;
+			i2c_transfer7(I2C1, 0x0b, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+
+			buf[0] = I2C_CMD_GET_DISPLAY_DATA;
+			i2c_transfer7(I2C1, 0x0b, (uint8_t*) &buf, 1, (uint8_t*) &buf, 0);
+
+			i2c_transfer7(I2C1, 0x0b, (uint8_t*) &buf, 0, (uint8_t*) &buf, 1);
+		}
+	}
 
 	fprintf(fp, "[init] Init complete, starting runloop\n");
 

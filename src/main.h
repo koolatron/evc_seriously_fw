@@ -7,7 +7,7 @@
 #include "timekeeping.h"
 #include "ansible.h"
 
-#define DEBUG_ROLE_COHORT   1
+//#define DEBUG_ROLE_COHORT   1
 
 #define LEDPORT				(GPIOB)
 #define LEDPIN				(GPIO5)
