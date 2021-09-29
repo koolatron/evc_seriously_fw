@@ -463,9 +463,8 @@ int main(void) {
 
 	fprintf(fp, "[init] Port init complete\n");
 
-	// Wait for a second to see if another board has control; all configuration should
-	// be complete during this period, so if this times out, this controller will
-	// select itself as the leader
+	// Wait for a second to see if another board has control; all role selection should be
+	// complete during this period. If this times out, this device will elect itself leader
 	temp = time.milliseconds - 1;
 
 	while (temp != time.milliseconds) {
@@ -490,8 +489,8 @@ int main(void) {
 		role = ROLE_LEADER;
 	}
 
-	// Clear the presence detect signal; this'll be used in a moment to instruct individual nodes
-	// to turn on their I2C buffers so they can be configured
+	// Clear the presence detect signal; this'll be used in a moment to instruct other nodes
+	// to turn on their i2c buffers so they can be configured
 	gpio_clear(SIGNALPORT, SIGNALPIN);
 
 	fprintf(fp, "[init] Role selection complete (%d)\n", role);
@@ -500,12 +499,18 @@ int main(void) {
 		I2C_OAR1(I2C1) &= ~(I2C_OAR1_OA1EN_ENABLE);
 		i2c_set_own_7bit_slave_address(I2C1, I2C_LEADER_ADDRESS);
 		root->i2c_address = I2C_LEADER_ADDRESS;
+		root->node_index = 0;
+		root->display_data = 0;
+		root->next_node = NULL;
 
-		fprintf(fp, "[init] I2C address set to 0x%02x\n", I2C_LEADER_ADDRESS);
+		fprintf(fp, "[init] Local i2c address set to 0x%02x\n", I2C_LEADER_ADDRESS);
 	} else {
 		root->i2c_address = I2C_DEFAULT_ADDRESS;
+		root->node_index = 0;
+		root->display_data = 0;
+		root->next_node = NULL;
 
-		fprintf(fp, "[init] I2C address set to 0x%02x\n", I2C_DEFAULT_ADDRESS);
+		fprintf(fp, "[init] Local i2c address set to 0x%02x\n", I2C_DEFAULT_ADDRESS);
 	}
 
 	if (role == ROLE_LEADER) {
@@ -514,7 +519,7 @@ int main(void) {
 		// the I2C bus, it'll have address I2C_DEFAULT_ADDRESS.  Our first goal will be to assign
 		// it a new address and verify that we can still chat with it
 
-		fprintf(fp, "[init] Signaling cohort to enable I2C buffer\n");
+		fprintf(fp, "[init] Signaling cohort to enable i2c buffer\n");
 
 		// Lazy busy-wait
 		for (int i = 0; i < 10000; i++)
@@ -535,7 +540,7 @@ int main(void) {
 
 		// Since this must only be done once during init, using a busy-wait is okay
 
-		fprintf(fp, "[init] Waiting for I2C buffer-enable signal\n");
+		fprintf(fp, "[init] Waiting for i2c buffer-enable signal\n");
 
 #ifndef DEBUG_ROLE_COHORT
 		while(!gpio_get(SENSEPORT, SENSEPIN)) {
@@ -546,7 +551,7 @@ int main(void) {
 
 		gpio_set(ENI2CPORT, ENI2CPIN);
 
-		fprintf(fp, "[init] Enabled I2C buffer\n");
+		fprintf(fp, "[init] Enabled i2c buffer\n");
 	} else {
 		// Leader sits this one out
 		for (int i = 0; i < 10000; i++)
@@ -567,52 +572,123 @@ int main(void) {
 	 */
 
 	if (role == ROLE_LEADER) {
-		fprintf(fp, "[init] Probing address 0x%02x for devices\n", I2C_DEFAULT_ADDRESS);
-
 		// cohort interrupts interfere with the leader sending this probe.  leader doesn't need
 		// anything but the nack interrupt anyhow
 		i2c_disable_interrupt(I2C1, I2C_CR1_STOPIE | I2C_CR1_RXIE | I2C_CR1_TXIE | I2C_CR1_ADDRIE);
 
-		// This is kinda piecemeal, and much of it is stolen from i2c_common_v2.c - however the
-		// library assumes that a device will be present and does no error checking; in order to
-		// probe for a device, we need to issue a speculative read to I2C_DEFAULT_ADDRESS and then
-		// wait to see whether the transaction generated a NACK, which we can check for		
-		i2c_set_7bit_address(I2C1, I2C_DEFAULT_ADDRESS);
-		i2c_set_read_transfer_dir(I2C1);
-		i2c_set_bytes_to_transfer(I2C1, 1);
-		i2c_enable_autoend(I2C1);
-		I2C_CR2(I2C1) |= I2C_CR2_START;
+		fprintf(fp, "[init] Starting bus probe\n");
 
-		// stall for a few hundred nanoseconds to let the transaction begin
-		for (int i = 0; i < 50; i++)
-			__asm__("nop");
+		bool device_probe_failed = false;
+		uint8_t index = 0;
 
-		// wait until the transaction is complete
-		while(i2c_busy(I2C1));
+		while (device_probe_failed == false) {
+			fprintf(fp, "[init] Probing address 0x%02x\n", I2C_DEFAULT_ADDRESS);
 
-		if (val == I2C_TRANSFER_NACK) {
-			fprintf(fp, "[init] No device detected at 0x%02x\n", I2C_DEFAULT_ADDRESS);
-		} else {
-			fprintf(fp, "[init] Detected a device at 0x%02x, configuring\n", I2C_DEFAULT_ADDRESS);
+			// XXX: The leader finishes each loop iteration in a weird state, which is cleared here
+			i2c_peripheral_disable(I2C1);
+			i2c_peripheral_enable(I2C1);
 
-			buf[0] = I2C_CMD_SET_ADDR;
-			buf[1] = 0x0b;
-			i2c_transfer7(I2C1, I2C_DEFAULT_ADDRESS, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+			// This is kinda piecemeal, and much of it is stolen from i2c_common_v2.c - however the
+			// library assumes that a device will be present and does no error checking; in order to
+			// probe for a device, we need to issue a speculative read to I2C_DEFAULT_ADDRESS and then
+			// wait to see whether the transaction generated a NACK, which we can check for		
+			i2c_set_7bit_address(I2C1, I2C_DEFAULT_ADDRESS);
+			i2c_set_read_transfer_dir(I2C1);
+			i2c_set_bytes_to_transfer(I2C1, 1);
+			i2c_enable_autoend(I2C1);
+			I2C_CR2(I2C1) |= I2C_CR2_START;
 
-			buf[0] = I2C_CMD_SET_DISPLAY_DATA;
-			buf[1] = 1;
-			i2c_transfer7(I2C1, 0x0b, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+			// Stall for a few hundred nanoseconds to let the transaction begin
+			for (int i = 0; i < 50; i++)
+				__asm__("nop");
 
-			buf[0] = I2C_CMD_GET_DISPLAY_DATA;
-			i2c_transfer7(I2C1, 0x0b, (uint8_t*) &buf, 1, (uint8_t*) &buf, 0);
+			// Wait until the transaction is complete
+			while(i2c_busy(I2C1));
 
-			i2c_transfer7(I2C1, 0x0b, (uint8_t*) &buf, 0, (uint8_t*) &buf, 1);
+			if (val == I2C_TRANSFER_NACK) {
+				fprintf(fp, "[init] No device at 0x%02x\n", I2C_DEFAULT_ADDRESS);
+				device_probe_failed = true;
+			} else {
+				fprintf(fp, "[init] Device present at 0x%02x\n", I2C_DEFAULT_ADDRESS);
+
+				index++;
+
+				// Set the new node's address
+				buf[0] = I2C_CMD_SET_ADDR;
+				buf[1] = I2C_LEADER_ADDRESS + index;
+				i2c_transfer7(I2C1, I2C_DEFAULT_ADDRESS, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+
+				fprintf(fp, "[init] (%d) Relocating: 0x%02x -> 0x%02x\n", index, I2C_DEFAULT_ADDRESS, buf[1]);
+
+				// Physical index
+				buf[0] = I2C_CMD_SET_INDEX;
+				buf[1] = index;
+				i2c_transfer7(I2C1, I2C_LEADER_ADDRESS + index, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+
+				fprintf(fp, "[init] (%d) Physical index: %d\n", index, buf[1]);
+
+				// Display data
+				buf[0] = I2C_CMD_SET_DISPLAY_DATA;
+				buf[1] = index;
+				i2c_transfer7(I2C1, I2C_LEADER_ADDRESS + index, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+
+				fprintf(fp, "[init] (%d) Display data: %d\n", index, buf[1]);
+
+				// And finally signal the next device to get on the bus
+				buf[0] = I2C_CMD_SET_SIGNAL;
+				buf[1] = 1;
+				i2c_transfer7(I2C1, I2C_LEADER_ADDRESS + index, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+
+				for (int i = 0; i < 10000; i++)
+					__asm__("nop");
+
+				buf[0] = I2C_CMD_SET_SIGNAL;
+				buf[1] = 0;
+				i2c_transfer7(I2C1, I2C_LEADER_ADDRESS + index, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+
+				// Now that the device is configured, update our own bookkeeping
+				node_t* node = add_node();
+				node->i2c_address = I2C_LEADER_ADDRESS + index;
+				node->node_index = index;
+				node->display_data = index;
+				node->next_node = NULL;
+
+				node_t* current = root;
+
+				while (current->next_node != NULL) {
+					current = current->next_node;
+				}
+
+				current->next_node = node;
+
+				fprintf(fp, "[init] (%d) Finished configuration\n", index);
+			}
 		}
+
+		// XXX: Leader ends this transaction block with STOPF set, which is cleared here
+		I2C_ICR(I2C1) |= I2C_ICR_STOPCF;
 	}
 
-	fprintf(fp, "[init] Init complete, starting runloop\n");
+	fprintf(fp, "[init] Summary of configured devices:\n");
+
+	node_t* current = root;
+	uint8_t n_nodes = 1;
+
+	fprintf(fp, "[init]   address: 0x%02x  index: %d\n", current->i2c_address, current->node_index);
+
+	while (current->next_node != NULL) {
+		current = current->next_node;
+		n_nodes++;
+
+		fprintf(fp, "[init]   address: 0x%02x  index: %d\n", current->i2c_address, current->node_index);
+	}
+
+	fprintf(fp, "[init]   %d total\n", n_nodes);
+
+	fprintf(fp, "[init] Init complete\n");
 
 	state = STATE_RUN;
+	fprintf(fp, "[run] Starting runloop\n");
 
     // Main runloop
 	while (1) {
