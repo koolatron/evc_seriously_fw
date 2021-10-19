@@ -20,6 +20,8 @@
 #define I2C_CMD_GET_DISPLAY_DATA    0x07
 #define I2C_CMD_SET_SIGNAL          0x08
 #define I2C_CMD_GET_SIGNAL          0x09
+#define I2C_CMD_SET_BRIGHTNESS      0x0a
+#define I2C_CMD_GET_BRIGHTNESS      0x0b
 
 #define NODE_PROP_I2C_ADDRESS       0x01
 #define NODE_PROP_DISPLAY_DATA      0x02
@@ -36,5 +38,6 @@ typedef struct node {
 } node_t;
 
 node_t* add_node(void);
+uint8_t last_node_index(node_t* root);
 
 #endif // _ANSIBLE_H

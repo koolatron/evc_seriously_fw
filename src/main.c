@@ -271,6 +271,24 @@ static void _set_digit(uint8_t value) {
 		case 9:
 			gpio_set(SEGPORT, 0xe6);
 			break;
+		case 0xa:
+			gpio_set(SEGPORT, 0xee);
+			break;
+		case 0xb:
+			gpio_set(SEGPORT, 0x7c);
+			break;
+		case 0xc:
+			gpio_set(SEGPORT, 0x1e);
+			break;
+		case 0xd:
+			gpio_set(SEGPORT, 0xf8);
+			break;
+		case 0xe:
+			gpio_set(SEGPORT, 0x5e);
+			break;
+		case 0xf:
+			gpio_set(SEGPORT, 0x4e);
+			break;
 		default:
 			gpio_set(SEGPORT, 0x00);
 	}
@@ -433,8 +451,7 @@ int main(void) {
 	uint8_t display_digit = 0;
 	uint8_t display_digit_next = 0;
 
-	uint16_t current_position = 0;		// the current bit position within current brightness step
-	uint16_t current_step = 0;			// the current brightness step
+	uint16_t transition_counter = 0;	// counter to keep track of transition status
 	uint16_t n_transition_steps = 20;	// number of discrete brightness levels per transition
 	uint16_t t_step_period = 20;		// length in milliseconds of each brightness step
 										// n_transition_steps must be >= t_step_period
@@ -503,14 +520,14 @@ int main(void) {
 		root->display_data = 0;
 		root->next_node = NULL;
 
-		fprintf(fp, "[init] Local i2c address set to 0x%02x\n", I2C_LEADER_ADDRESS);
+		fprintf(fp, "[init] Own i2c address set to 0x%02x\n", I2C_LEADER_ADDRESS);
 	} else {
 		root->i2c_address = I2C_DEFAULT_ADDRESS;
 		root->node_index = 0;
 		root->display_data = 0;
 		root->next_node = NULL;
 
-		fprintf(fp, "[init] Local i2c address set to 0x%02x\n", I2C_DEFAULT_ADDRESS);
+		fprintf(fp, "[init] Own i2c address set to 0x%02x\n", I2C_DEFAULT_ADDRESS);
 	}
 
 	if (role == ROLE_LEADER) {
@@ -582,7 +599,7 @@ int main(void) {
 		uint8_t index = 0;
 
 		while (device_probe_failed == false) {
-			fprintf(fp, "[init] Probing address 0x%02x\n", I2C_DEFAULT_ADDRESS);
+			fprintf(fp, "[init] Probing default address 0x%02x\n", I2C_DEFAULT_ADDRESS);
 
 			// XXX: The leader finishes each loop iteration in a weird state, which is cleared here
 			i2c_peripheral_disable(I2C1);
@@ -591,7 +608,7 @@ int main(void) {
 			// This is kinda piecemeal, and much of it is stolen from i2c_common_v2.c - however the
 			// library assumes that a device will be present and does no error checking; in order to
 			// probe for a device, we need to issue a speculative read to I2C_DEFAULT_ADDRESS and then
-			// wait to see whether the transaction generated a NACK, which we can check for		
+			// wait to see whether the transaction generated a NACK, which is something we can detect
 			i2c_set_7bit_address(I2C1, I2C_DEFAULT_ADDRESS);
 			i2c_set_read_transfer_dir(I2C1);
 			i2c_set_bytes_to_transfer(I2C1, 1);
@@ -669,59 +686,68 @@ int main(void) {
 		I2C_ICR(I2C1) |= I2C_ICR_STOPCF;
 	}
 
+	fprintf(fp, "[init] Bus probe complete\n");
 	fprintf(fp, "[init] Summary of configured devices:\n");
 
 	node_t* current = root;
 	uint8_t n_nodes = 1;
 
-	fprintf(fp, "[init]   address: 0x%02x  index: %d\n", current->i2c_address, current->node_index);
+	fprintf(fp, "[init]   %d address: 0x%02x\n",  current->node_index, current->i2c_address);
 
 	while (current->next_node != NULL) {
 		current = current->next_node;
 		n_nodes++;
 
-		fprintf(fp, "[init]   address: 0x%02x  index: %d\n", current->i2c_address, current->node_index);
+		fprintf(fp, "[init]   %d address: 0x%02x\n",  current->node_index, current->i2c_address);
 	}
 
-	fprintf(fp, "[init]   %d total\n", n_nodes);
+	fprintf(fp, "[init]   (%d total)\n", n_nodes);
 
 	fprintf(fp, "[init] Init complete\n");
 
 	state = STATE_RUN;
+
 	fprintf(fp, "[run] Starting runloop\n");
 
     // Main runloop
 	while (1) {
 		if (i2c_flag) {
 			fprintf(fp, "[i2c] i2c interrupt fired!\n");
-			fprintf(fp, "[i2c] i2c_flag: %d\n", i2c_flag);
 			fprintf(fp, "[i2c] val: %d\n", val);
 			fprintf(fp, "[i2c] I2C_ISR: 0x%08lx I2C_ICR: 0x%08lx I2C_OAR1: 0x%08lx\n", I2C_ISR(I2C1), I2C_ICR(I2C1), I2C_OAR1(I2C1));
 
 			i2c_flag = 0;
 		}
 
+		// the systick handler sets this flag every millisecond
         if (isr_flag) {
 			isr_flag = 0;
 
-		    // Toggle LED GPIO
+		    // Do some stuff - toggle LED GPIO, set the display values from timekeeping register, and
+			// start a digit transition
 			if (time.milliseconds == 0) {
 	    	    gpio_toggle(LEDPORT, LEDPIN);
-				_set_grid_duty_cycle((time.seconds % 10) * 10);
+//				_set_grid_duty_cycle((time.seconds % 10) * 10);
+				_set_grid_duty_cycle(100);
 
-				display_digit = display_digit_next;
-				display_digit_next = (display_digit + 1) % 10;
+				display_digit = time.seconds % 16;
+				display_digit_next = (display_digit + 1) % 16;
 
-				current_step = 0;
+				// begin a digit transition
+				transition_counter = 0;
 
 				fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
-				fprintf(fp, "[i2c] I2C_ISR: 0x%08lx I2C_ICR: 0x%08lx I2C_OAR1: 0x%08lx\n", I2C_ISR(I2C1), I2C_ICR(I2C1), I2C_OAR1(I2C1));
 			}
 
-			if ( time.milliseconds < ( n_transition_steps * t_step_period ) ) {
-				current_step = ( ( time.milliseconds - ( time.milliseconds % t_step_period ) ) / t_step_period ) + 1;
-				current_position = ( time.milliseconds % t_step_period ) + 1;
+			if ( transition_counter < ( n_transition_steps * t_step_period ) ) {
+				// The current brightness step in this transition
+				uint8_t current_step = ( ( transition_counter - ( transition_counter % t_step_period ) ) / t_step_period ) + 1;
+				// The current position within that brightness step
+				uint8_t current_position = ( transition_counter % t_step_period ) + 1;
 
+				// The number of bits set in the current transition step; (n_bits / t_step_period) is the
+				// duty cycle for the new display data and determines how bright the new symbol appears
+				// compared to the old one
 				uint8_t n_bits = ( t_step_period / n_transition_steps ) * current_step;
 
 				if ( _select_digit( t_step_period, n_bits, current_position ) ) {
@@ -729,6 +755,8 @@ int main(void) {
 				} else {
 					_set_digit( display_digit );
 				}
+
+				transition_counter++;
 			}
 		}
 	}
