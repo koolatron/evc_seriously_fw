@@ -356,6 +356,43 @@ static uint8_t _select_digit( uint8_t length, uint8_t set_bits, uint8_t pos ) {
 	}
 }
 
+static void update_display(void) {
+	if ( display_digit == root->display_data )
+		return;
+
+	if ( root->transition_type == TRANSITION_TYPE_DEFAULT ) {
+		display_digit = root->display_data;
+		_set_digit( display_digit );
+	}
+
+	if ( root->transition_type == TRANSITION_TYPE_FADE ) {
+		if ( transition_counter < ( N_TRANSITION_STEPS * T_STEP_PERIOD ) ) {
+			// The current brightness step in this transition
+			uint8_t current_step = ( ( transition_counter - ( transition_counter % T_STEP_PERIOD ) ) / T_STEP_PERIOD ) + 1;
+			// The current position within that brightness step
+			uint8_t current_position = ( transition_counter % T_STEP_PERIOD ) + 1;
+
+			// The number of bits set in the current transition step; (n_bits / t_step_period) is the
+			// duty cycle for the new display data and determines how bright the new symbol appears
+			// compared to the old one
+			uint8_t n_bits = ( T_STEP_PERIOD / N_TRANSITION_STEPS ) * current_step;
+
+			if ( _select_digit( T_STEP_PERIOD, n_bits, current_position ) ) {
+				_set_digit( root->display_data );
+			} else {
+				_set_digit( display_digit );
+			}
+
+			transition_counter++;
+		} else {
+			transition_counter = 0;
+			display_digit = root->display_data;
+			_set_digit( display_digit );
+		}
+	}
+}
+
+
 void sys_tick_handler(void) {
 	isr_flag = 1;
 
@@ -448,13 +485,9 @@ int main(void) {
 	uint8_t role = ROLE_UNKNOWN;
 	uint16_t temp = 0;
 
-	uint8_t display_digit = 0;
-	uint8_t display_digit_next = 0;
+	display_digit = 0;
+	transition_counter = 0;
 
-	uint16_t transition_counter = 0;	// counter to keep track of transition status
-	uint16_t n_transition_steps = 20;	// number of discrete brightness levels per transition
-	uint16_t t_step_period = 20;		// length in milliseconds of each brightness step
-										// n_transition_steps must be >= t_step_period
 	clock_setup();
 	gpio_setup();
     timer_setup();
@@ -467,6 +500,7 @@ int main(void) {
 	root = add_node();
 
 	state = STATE_CONF;
+	fprintf(fp, "[state] 0x%02x\n", state);
 
 	fprintf(fp, "[init] Starting init\n");
 
@@ -518,6 +552,7 @@ int main(void) {
 		root->i2c_address = I2C_LEADER_ADDRESS;
 		root->node_index = 0;
 		root->display_data = 0;
+		root->transition_type = TRANSITION_TYPE_FADE;
 		root->next_node = NULL;
 
 		fprintf(fp, "[init] Own i2c address set to 0x%02x\n", I2C_LEADER_ADDRESS);
@@ -525,6 +560,7 @@ int main(void) {
 		root->i2c_address = I2C_DEFAULT_ADDRESS;
 		root->node_index = 0;
 		root->display_data = 0;
+		root->transition_type = TRANSITION_TYPE_DEFAULT;
 		root->next_node = NULL;
 
 		fprintf(fp, "[init] Own i2c address set to 0x%02x\n", I2C_DEFAULT_ADDRESS);
@@ -706,6 +742,7 @@ int main(void) {
 	fprintf(fp, "[init] Init complete\n");
 
 	state = STATE_RUN;
+	fprintf(fp, "[state] 0x%02x\n", state);
 
 	fprintf(fp, "[run] Starting runloop\n");
 
@@ -723,41 +760,17 @@ int main(void) {
         if (isr_flag) {
 			isr_flag = 0;
 
-		    // Do some stuff - toggle LED GPIO, set the display values from timekeeping register, and
-			// start a digit transition
+		    // Do some stuff - toggle LED GPIO, set the next digit to display from timekeeping register
 			if (time.milliseconds == 0) {
 	    	    gpio_toggle(LEDPORT, LEDPIN);
-//				_set_grid_duty_cycle((time.seconds % 10) * 10);
+
 				_set_grid_duty_cycle(100);
-
-				display_digit = time.seconds % 16;
-				display_digit_next = (display_digit + 1) % 16;
-
-				// begin a digit transition
-				transition_counter = 0;
+				root->display_data = ((time.seconds % 16) + 1) % 16;
 
 				fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
 			}
 
-			if ( transition_counter < ( n_transition_steps * t_step_period ) ) {
-				// The current brightness step in this transition
-				uint8_t current_step = ( ( transition_counter - ( transition_counter % t_step_period ) ) / t_step_period ) + 1;
-				// The current position within that brightness step
-				uint8_t current_position = ( transition_counter % t_step_period ) + 1;
-
-				// The number of bits set in the current transition step; (n_bits / t_step_period) is the
-				// duty cycle for the new display data and determines how bright the new symbol appears
-				// compared to the old one
-				uint8_t n_bits = ( t_step_period / n_transition_steps ) * current_step;
-
-				if ( _select_digit( t_step_period, n_bits, current_position ) ) {
-					_set_digit( display_digit_next );
-				} else {
-					_set_digit( display_digit );
-				}
-
-				transition_counter++;
-			}
+			update_display();
 		}
 	}
 

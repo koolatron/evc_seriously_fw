@@ -29,11 +29,14 @@
 #define NODE_PROP_NEXT_NODE_ADDR    0x04
 #define NODE_PROP_PREV_NODE_ADDR    0x05
 
+#define TRANSITION_TYPE_DEFAULT     0x01
+#define TRANSITION_TYPE_FADE        0x02
+
 typedef struct node {
     uint8_t i2c_address;            // Node I2C address
     uint8_t node_index;             // Absolute (physical) position
     uint8_t display_data;           // What the node is assigned to display
-    uint8_t transition_type;        // Transition type (if any)
+    uint8_t transition_type;        // Transition type
     struct node* next_node;         // Pointer to the next node
 } node_t;
 

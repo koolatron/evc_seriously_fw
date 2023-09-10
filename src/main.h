@@ -7,6 +7,8 @@
 #include "timekeeping.h"
 #include "ansible.h"
 
+#define BOARD_REV           "1.2f"
+
 //#define DEBUG_ROLE_COHORT   1
 
 #define LEDPORT				(GPIOB)
@@ -64,6 +66,10 @@
 #define ROLE_LEADER         0x01
 #define ROLE_COHORT         0x02
 
+// Transition constants
+#define N_TRANSITION_STEPS  20      // Number of discrete brightness steps per transition
+#define T_STEP_PERIOD       20      // Length of each step in milliseconds
+
 volatile uint8_t isr_flag;
 volatile uint8_t i2c_flag;
 volatile uint32_t status;
@@ -74,6 +80,10 @@ volatile uint8_t* read_ptr;
 volatile uint8_t read_bytes;
 volatile uint8_t buf[3];
 volatile uint8_t val;
+
+// Display-related timers and buffers
+uint8_t display_digit;
+uint16_t transition_counter;
 
 // Root node for device state.  The root node is always the local device,
 // and the only device with more than one entry in this list is the leader
@@ -91,5 +101,7 @@ static ssize_t _iowr(void *_cookie, const char *_buf, size_t _n);
 static void _set_grid_duty_cycle(uint8_t duty_cycle);
 static void _set_digit(uint8_t value);
 static uint8_t _select_digit(uint8_t length, uint8_t set_bits, uint8_t pos);
+
+static void update_display(void);
 
 #endif // _MAIN_H

@@ -10,6 +10,7 @@ uint8_t last_node_index(node_t* root) {
     node_t* node;
 
     node = root;
+    last_index = root->node_index;
 
     while (node->next_node != NULL) {
         last_index++;
