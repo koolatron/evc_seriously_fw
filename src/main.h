@@ -70,6 +70,12 @@
 #define N_TRANSITION_STEPS  20      // Number of discrete brightness steps per transition
 #define T_STEP_PERIOD       20      // Length of each step in milliseconds
 
+// Button constants
+#define BUTTON_ON           20      // On value and threshold
+#define BUTTON_OFF          0       // Off value
+#define BUTTON_HOLDOFF      250     // How long to wait after a button press to rearm
+
+// Interrupt flags, status, and buffers
 volatile uint8_t isr_flag;
 volatile uint8_t i2c_flag;
 volatile uint32_t status;
@@ -84,6 +90,10 @@ volatile uint8_t val;
 // Display-related timers and buffers
 uint8_t display_digit;
 uint16_t transition_counter;
+
+// Button-related buffer
+uint8_t button_counter;
+uint16_t button_holdoff_counter;
 
 // Root node for device state.  The root node is always the local device,
 // and the only device with more than one entry in this list is the leader
@@ -103,5 +113,8 @@ static void _set_digit(uint8_t value);
 static uint8_t _select_digit(uint8_t length, uint8_t set_bits, uint8_t pos);
 
 static void update_display(void);
+
+static void update_button(void);
+static uint8_t button_state(void);
 
 #endif // _MAIN_H

@@ -392,6 +392,30 @@ static void update_display(void) {
 	}
 }
 
+static void update_button(void) {
+	if ( gpio_get(SWPORT, SWPIN) ) {
+		if ( button_counter > BUTTON_OFF )
+			button_counter--;
+	} else {
+		if ( button_counter < BUTTON_ON )
+			button_counter++;
+	}
+}
+
+static uint8_t button_state(void) {
+	if ( button_counter == BUTTON_ON ) {
+		if ( button_holdoff_counter == 0 ) {
+			button_holdoff_counter = BUTTON_HOLDOFF;
+			return BUTTON_ON;
+		}
+		button_holdoff_counter--;
+	}
+
+	if ( button_counter == BUTTON_OFF )
+		button_holdoff_counter = 0;
+
+	return BUTTON_OFF;
+}
 
 void sys_tick_handler(void) {
 	isr_flag = 1;
@@ -487,6 +511,9 @@ int main(void) {
 
 	display_digit = 0;
 	transition_counter = 0;
+
+	button_counter = BUTTON_OFF;
+	button_holdoff_counter = BUTTON_HOLDOFF;
 
 	clock_setup();
 	gpio_setup();
@@ -770,7 +797,11 @@ int main(void) {
 				fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
 			}
 
+			update_button();
 			update_display();
+
+			if ( button_state() == BUTTON_ON )
+				fprintf(fp, "button on!\n");
 		}
 	}
 
