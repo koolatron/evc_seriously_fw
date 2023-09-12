@@ -11,6 +11,7 @@ typedef struct stime_t {
     uint8_t days;
     uint8_t months;
     uint8_t years;
+    uint8_t bytes[6];
 } stime_t;
 
 void srtc_update(volatile stime_t* time);

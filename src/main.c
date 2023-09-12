@@ -356,7 +356,7 @@ static uint8_t _select_digit( uint8_t length, uint8_t set_bits, uint8_t pos ) {
 	}
 }
 
-static void update_display(void) {
+static void service_display(void) {
 	if ( display_digit == root->display_data )
 		return;
 
@@ -392,36 +392,51 @@ static void update_display(void) {
 	}
 }
 
-static void update_button(void) {
-	if ( gpio_get(SWPORT, SWPIN) ) {
-		if ( button_counter > BUTTON_OFF )
-			button_counter--;
-	} else {
-		if ( button_counter < BUTTON_ON )
-			button_counter++;
-	}
-}
-
 static uint8_t button_state(void) {
-	if ( button_counter == BUTTON_ON ) {
-		if ( button_holdoff_counter == 0 ) {
-			button_holdoff_counter = BUTTON_HOLDOFF;
-			return BUTTON_ON;
-		}
-		button_holdoff_counter--;
+	if ( button_counter == BUTTON_MAX ) {
+		button_counter = BUTTON_MIN;
+		return BUTTON_ON;
 	}
-
-	if ( button_counter == BUTTON_OFF )
-		button_holdoff_counter = 0;
 
 	return BUTTON_OFF;
 }
 
-void sys_tick_handler(void) {
-	isr_flag = 1;
+static void service_button(void) {
+	if ( gpio_get(SWPORT, SWPIN) ) {
+		if ( button_counter < BUTTON_IDLE )
+			button_counter++;
+		if ( button_counter > BUTTON_IDLE )
+			button_counter--;
+	} else {
+		if ( button_counter < BUTTON_MAX )
+			button_counter++;
+	}
+}
 
-	time.milliseconds++;
-	srtc_update(&time);
+static uint8_t should_update_array(void) {
+	node_t* current = root;
+
+	do {
+		if (current->display_data != time.bytes[current->node_index])
+			return true;
+		current = current->next_node;
+	} while (current != NULL);
+
+	return false;
+}
+
+static void update_time_from_display(void) {
+	// Update leader's timekeeping structure from display data
+	// Should be called every second or so by the leader
+}
+
+static void update_display_from_time(void) {
+	// Update display data from leader's timekeeping structure
+	// Should be called after every timekeeping tick
+}
+
+void sys_tick_handler(void) {
+	systick_flag = 1;
 }
 
 void i2c1_ev_exti23_isr(void) {
@@ -512,8 +527,7 @@ int main(void) {
 	display_digit = 0;
 	transition_counter = 0;
 
-	button_counter = BUTTON_OFF;
-	button_holdoff_counter = BUTTON_HOLDOFF;
+	button_counter = BUTTON_MIN;
 
 	clock_setup();
 	gpio_setup();
@@ -543,16 +557,17 @@ int main(void) {
 
 	// Wait for a second to see if another board has control; all role selection should be
 	// complete during this period. If this times out, this device will elect itself leader
-	temp = time.milliseconds - 1;
+	temp = 1000;
 
-	while (temp != time.milliseconds) {
-		if (isr_flag) {
-			isr_flag = 0;
+	while (temp > 0) {
+		if (systick_flag) {
+			systick_flag = 0;
+			temp--;
 
 			if (gpio_get(SENSEPORT, SENSEPIN)) {
 				fprintf(fp, "[init] Cohort detected (%d)\n", time.milliseconds - temp);
 				role = ROLE_COHORT;
-				temp = time.milliseconds;
+				temp = 0;
 			}
 		}
 	}
@@ -741,11 +756,15 @@ int main(void) {
 
 				current->next_node = node;
 
-				fprintf(fp, "[init] (%d) Finished configuration\n", index);
+				fprintf(fp, "[init] (%d) Finished initial configuration\n", index);
 			}
 		}
 
-		// XXX: Leader ends this transaction block with STOPF set, which is cleared here
+		// Now that we've discovered all the other nodes, it's time to assign them some properties based
+		// on what we intend to display on them.
+
+		// NB: In autoend mode, the I2C transceiver automatically asserts a STOP condition at the end of
+		//     a transaction, which gets cleared here.
 		I2C_ICR(I2C1) |= I2C_ICR_STOPCF;
 	}
 
@@ -753,19 +772,16 @@ int main(void) {
 	fprintf(fp, "[init] Summary of configured devices:\n");
 
 	node_t* current = root;
-	uint8_t n_nodes = 1;
+	uint8_t n_nodes = 0;
 
-	fprintf(fp, "[init]   %d address: 0x%02x\n",  current->node_index, current->i2c_address);
+	do {
+		fprintf(fp, "[init]   index: %d, address: 0x%02x\n",  current->node_index, current->i2c_address);
 
-	while (current->next_node != NULL) {
 		current = current->next_node;
 		n_nodes++;
-
-		fprintf(fp, "[init]   %d address: 0x%02x\n",  current->node_index, current->i2c_address);
-	}
+	} while ( current != NULL );
 
 	fprintf(fp, "[init]   (%d total)\n", n_nodes);
-
 	fprintf(fp, "[init] Init complete\n");
 
 	state = STATE_RUN;
@@ -784,21 +800,30 @@ int main(void) {
 		}
 
 		// the systick handler sets this flag every millisecond
-        if (isr_flag) {
-			isr_flag = 0;
+        if (systick_flag) {
+			systick_flag = 0;
 
-		    // Do some stuff - toggle LED GPIO, set the next digit to display from timekeeping register
-			if (time.milliseconds == 0) {
-	    	    gpio_toggle(LEDPORT, LEDPIN);
+			if ( role == ROLE_LEADER ) {
+				if (time.milliseconds == 0) {
+					gpio_toggle(LEDPORT, LEDPIN);
 
-				_set_grid_duty_cycle(100);
-				root->display_data = ((time.seconds % 16) + 1) % 16;
+					root->display_data = (time.seconds / 10) % 10;
 
-				fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
+					fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
+
+					update_time_from_display();
+				}
+
+				time.milliseconds++;
+				srtc_update(&time);
+
+				// if ( should_update_array() ) {
+				//	update_display_from_time();
+				// }
 			}
 
-			update_button();
-			update_display();
+			service_button();
+			service_display();
 
 			if ( button_state() == BUTTON_ON )
 				fprintf(fp, "button on!\n");

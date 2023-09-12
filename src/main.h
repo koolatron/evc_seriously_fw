@@ -71,12 +71,14 @@
 #define T_STEP_PERIOD       20      // Length of each step in milliseconds
 
 // Button constants
-#define BUTTON_ON           20      // On value and threshold
-#define BUTTON_OFF          0       // Off value
-#define BUTTON_HOLDOFF      250     // How long to wait after a button press to rearm
+#define BUTTON_ON           0x00
+#define BUTTON_OFF          0x01
+#define BUTTON_MIN          0       // Bottom count
+#define BUTTON_IDLE         250     // Hysteresis value
+#define BUTTON_MAX          270     // Top count/on value; (MAX - IDLE) is button sensitivity
 
 // Interrupt flags, status, and buffers
-volatile uint8_t isr_flag;
+volatile uint8_t systick_flag;
 volatile uint8_t i2c_flag;
 volatile uint32_t status;
 volatile stime_t time;
@@ -92,8 +94,7 @@ uint8_t display_digit;
 uint16_t transition_counter;
 
 // Button-related buffer
-uint8_t button_counter;
-uint16_t button_holdoff_counter;
+uint16_t button_counter;
 
 // Root node for device state.  The root node is always the local device,
 // and the only device with more than one entry in this list is the leader
@@ -112,9 +113,13 @@ static void _set_grid_duty_cycle(uint8_t duty_cycle);
 static void _set_digit(uint8_t value);
 static uint8_t _select_digit(uint8_t length, uint8_t set_bits, uint8_t pos);
 
-static void update_display(void);
+static void service_display(void);
 
-static void update_button(void);
+static void service_button(void);
 static uint8_t button_state(void);
+
+static uint8_t should_update_array(void);
+static void update_display_from_time(void);
+static void update_time_from_display(void);
 
 #endif // _MAIN_H
