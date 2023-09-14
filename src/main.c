@@ -393,50 +393,51 @@ static void service_display(void) {
 }
 
 static uint8_t button_state(void) {
-	if ( button_counter == BUTTON_MAX ) {
-		button_counter = BUTTON_MIN;
-		return BUTTON_ON;
+	if ( button == true ) {
+		button = false;
+		return true;
 	}
 
-	return BUTTON_OFF;
+	return false;
 }
 
 static void service_button(void) {
 	if ( gpio_get(SWPORT, SWPIN) ) {
-		if ( button_counter < BUTTON_IDLE )
-			button_counter++;
-		if ( button_counter > BUTTON_IDLE )
+		if ( button_counter > BUTTON_MIN )
 			button_counter--;
 	} else {
 		if ( button_counter < BUTTON_MAX )
 			button_counter++;
 	}
+
+	if ( button_counter == BUTTON_MAX ) {
+		button = true;
+	}
 }
 
-static uint8_t should_update_array(void) {
+static uint8_t should_update_node(uint8_t index) {
 	node_t* current = root;
 
 	do {
-		if (current->display_data != time.bytes[current->node_index])
-			return true;
+		index--;
+
+		if ( index == 0 ) {
+			if ( current->display_data != time.bytes[current->node_index] )
+				return true;
+			return false;
+		}
+
 		current = current->next_node;
 	} while (current != NULL);
 
 	return false;
 }
 
-static void update_time_from_display(void) {
-	// Update leader's timekeeping structure from display data
-	// Should be called every second or so by the leader
-}
-
-static void update_display_from_time(void) {
-	// Update display data from leader's timekeeping structure
-	// Should be called after every timekeeping tick
-}
-
 void sys_tick_handler(void) {
 	systick_flag = 1;
+
+	time.milliseconds++;
+	srtc_update(&time);
 }
 
 void i2c1_ev_exti23_isr(void) {
@@ -497,6 +498,9 @@ void i2c1_ev_exti23_isr(void) {
 			case I2C_CMD_GET_SIGNAL:
 				val = (uint8_t) gpio_get(SIGNALPORT, SIGNALPIN);
 				break;
+			case I2C_CMD_GET_BUTTON:
+				val = button_state();
+				break;
 			default:
 				break;
 		}
@@ -528,6 +532,7 @@ int main(void) {
 	transition_counter = 0;
 
 	button_counter = BUTTON_MIN;
+	button = false;
 
 	clock_setup();
 	gpio_setup();
@@ -760,9 +765,6 @@ int main(void) {
 			}
 		}
 
-		// Now that we've discovered all the other nodes, it's time to assign them some properties based
-		// on what we intend to display on them.
-
 		// NB: In autoend mode, the I2C transceiver automatically asserts a STOP condition at the end of
 		//     a transaction, which gets cleared here.
 		I2C_ICR(I2C1) |= I2C_ICR_STOPCF;
@@ -810,23 +812,16 @@ int main(void) {
 					root->display_data = (time.seconds / 10) % 10;
 
 					fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
-
-					update_time_from_display();
 				}
-
-				time.milliseconds++;
-				srtc_update(&time);
-
-				// if ( should_update_array() ) {
-				//	update_display_from_time();
-				// }
 			}
 
 			service_button();
 			service_display();
 
-			if ( button_state() == BUTTON_ON )
-				fprintf(fp, "button on!\n");
+			if ( ( time.milliseconds % 250 ) == 0) {
+				if ( button_state() == true )
+					fprintf(fp, "button on!\n");
+			}
 		}
 	}
 

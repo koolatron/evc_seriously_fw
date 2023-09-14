@@ -22,6 +22,7 @@
 #define I2C_CMD_GET_SIGNAL          0x09
 #define I2C_CMD_SET_BRIGHTNESS      0x0a
 #define I2C_CMD_GET_BRIGHTNESS      0x0b
+#define I2C_CMD_GET_BUTTON          0x0c
 
 #define NODE_PROP_I2C_ADDRESS       0x01
 #define NODE_PROP_INDEX             0x02
