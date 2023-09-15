@@ -87,12 +87,12 @@ volatile uint8_t buf[3];
 volatile uint8_t val;
 
 // Display-related timers and buffers
-uint8_t display_digit;
-uint16_t transition_counter;
+volatile uint8_t display_digit;
+volatile uint16_t transition_counter;
 
 // Button-related buffer
-uint16_t button_counter;
-uint8_t button;
+volatile uint16_t button_counter;
+volatile uint8_t button;
 
 // Root node for device state.  The root node is always the local device,
 // and the only device with more than one entry in this list is the leader
@@ -117,5 +117,9 @@ static void service_button(void);
 static uint8_t button_state(void);
 
 static uint8_t should_update_node(uint8_t index);
+
+#ifdef PROFILE_ISR
+volatile uint32_t cycle_counter;
+#endif // PROFILE_ISR
 
 #endif // _MAIN_H

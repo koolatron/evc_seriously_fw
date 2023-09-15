@@ -21,6 +21,10 @@
 #include <libopencm3/cm3/systick.h>
 #include <libopencm3/stm32/usart.h>
 
+#ifdef PROFILE_ISR
+#include <libopencm3/cm3/dwt.h>
+#endif // PROFILE_ISR
+
 static void clock_setup(void)
 {
 	rcc_osc_bypass_enable(RCC_HSE);
@@ -434,10 +438,21 @@ static uint8_t should_update_node(uint8_t index) {
 }
 
 void sys_tick_handler(void) {
+#ifdef PROFILE_ISR
+	cycle_counter = dwt_read_cycle_counter();
+#endif
+
 	systick_flag = 1;
+
+	service_button();
+	service_display();
 
 	time.milliseconds++;
 	srtc_update(&time);
+
+#ifdef PROFILE_ISR
+	cycle_counter = dwt_read_cycle_counter() - cycle_counter;
+#endif
 }
 
 void i2c1_ev_exti23_isr(void) {
@@ -534,16 +549,25 @@ int main(void) {
 	button_counter = BUTTON_MIN;
 	button = false;
 
+	root = add_node();
+
+	root->node_index = 0;
+	root->display_data = 0;
+	root->transition_type = TRANSITION_TYPE_FADE;
+	root->next_node = NULL;
+
 	clock_setup();
 	gpio_setup();
     timer_setup();
 	systick_setup();
 	i2c_setup();
 
+#ifdef PROFILE_ISR
+	dwt_enable_cycle_counter();
+#endif
+
 	FILE *fp;
 	fp = usart_setup();
-
-	root = add_node();
 
 	state = STATE_CONF;
 	fprintf(fp, "[state] 0x%02x\n", state);
@@ -597,21 +621,11 @@ int main(void) {
 		I2C_OAR1(I2C1) &= ~(I2C_OAR1_OA1EN_ENABLE);
 		i2c_set_own_7bit_slave_address(I2C1, I2C_LEADER_ADDRESS);
 		root->i2c_address = I2C_LEADER_ADDRESS;
-		root->node_index = 0;
-		root->display_data = 0;
-		root->transition_type = TRANSITION_TYPE_FADE;
-		root->next_node = NULL;
-
-		fprintf(fp, "[init] Own i2c address set to 0x%02x\n", I2C_LEADER_ADDRESS);
 	} else {
 		root->i2c_address = I2C_DEFAULT_ADDRESS;
-		root->node_index = 0;
-		root->display_data = 0;
-		root->transition_type = TRANSITION_TYPE_DEFAULT;
-		root->next_node = NULL;
-
-		fprintf(fp, "[init] Own i2c address set to 0x%02x\n", I2C_DEFAULT_ADDRESS);
 	}
+
+	fprintf(fp, "[init] Own i2c address set to 0x%02x\n", root->i2c_address);
 
 	if (role == ROLE_LEADER) {
 		// This tells the next node up in the chain to turn on its I2C buffer so we can talk
@@ -791,7 +805,8 @@ int main(void) {
 
 	fprintf(fp, "[run] Starting runloop\n");
 
-    // Main runloop
+    // Main runloop - most of the real work (button, display, i2c follower service) is done within ISRs.
+	// Stuff that isn't timing-critical gets deferred to this loop after the ISR is finished.
 	while (1) {
 		if (i2c_flag) {
 			fprintf(fp, "[i2c] i2c interrupt fired!\n");
@@ -814,9 +829,6 @@ int main(void) {
 					fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
 				}
 			}
-
-			service_button();
-			service_display();
 
 			if ( ( time.milliseconds % 250 ) == 0) {
 				if ( button_state() == true )
