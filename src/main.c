@@ -399,6 +399,8 @@ static void service_display(void) {
 static uint8_t button_state(void) {
 	if ( button == true ) {
 		button = false;
+		button_counter = BUTTON_MIN;
+
 		return true;
 	}
 
@@ -407,8 +409,7 @@ static uint8_t button_state(void) {
 
 static void service_button(void) {
 	if ( gpio_get(SWPORT, SWPIN) ) {
-		if ( button_counter > BUTTON_MIN )
-			button_counter--;
+		button_counter = BUTTON_MIN;
 	} else {
 		if ( button_counter < BUTTON_MAX )
 			button_counter++;
@@ -416,25 +417,8 @@ static void service_button(void) {
 
 	if ( button_counter == BUTTON_MAX ) {
 		button = true;
+		button_counter = BUTTON_MIN;
 	}
-}
-
-static uint8_t should_update_node(uint8_t index) {
-	node_t* current = root;
-
-	do {
-		index--;
-
-		if ( index == 0 ) {
-			if ( current->display_data != time.bytes[current->node_index] )
-				return true;
-			return false;
-		}
-
-		current = current->next_node;
-	} while (current != NULL);
-
-	return false;
 }
 
 void sys_tick_handler(void) {
@@ -805,8 +789,12 @@ int main(void) {
 
 	fprintf(fp, "[run] Starting runloop\n");
 
+	uint8_t last_node_index = get_last_node_index(root);
+	fprintf(fp, "[debug] last_node_index %d\n", last_node_index);
+
     // Main runloop - most of the real work (button, display, i2c follower service) is done within ISRs.
-	// Stuff that isn't timing-critical gets deferred to this loop after the ISR is finished.
+	// Stuff that isn't timing-critical gets deferred to this loop after the ISR is finished.  i2c leader
+	// service happens here because those transfers are _blocking_!
 	while (1) {
 		if (i2c_flag) {
 			fprintf(fp, "[i2c] i2c interrupt fired!\n");
@@ -820,19 +808,92 @@ int main(void) {
         if (systick_flag) {
 			systick_flag = 0;
 
-			if ( role == ROLE_LEADER ) {
-				if (time.milliseconds == 0) {
-					gpio_toggle(LEDPORT, LEDPIN);
-
-					root->display_data = (time.seconds / 10) % 10;
-
-					fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
-				}
+			if (time.milliseconds == 0) {
+				gpio_toggle(LEDPORT, LEDPIN);
+				fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
 			}
 
-			if ( ( time.milliseconds % 250 ) == 0) {
-				if ( button_state() == true )
-					fprintf(fp, "button on!\n");
+			if ( role == ROLE_LEADER ) {
+				if ( ( time.milliseconds % 250 ) == 0) {
+
+					// For each node:
+					//   Check for button presses
+					//     Update timekeeping register
+					//   If node needs update:
+					//     Update node display
+
+					// Process root node first, since it doesn't require any I2C chatter
+					if ( button_state() == true ) {
+						time.bytes[last_node_index]++;
+						srtc_update_from_bytes(&time);
+
+						root->transition_type = TRANSITION_TYPE_DEFAULT;
+
+						root->display_data = time.bytes[last_node_index];
+
+						// Stall for one millisecond to ensure the display update finishes
+						temp = time.milliseconds + 1;
+						while (temp != time.milliseconds)
+							__asm__("nop");
+
+						root->transition_type = TRANSITION_TYPE_FADE;
+
+						fprintf(fp, "[debug] %04d display updated to %d\n", time.milliseconds, root->display_data);
+					}
+
+					if (root->display_data != time.bytes[last_node_index]) {
+						root->display_data = time.bytes[last_node_index];
+					}
+
+					current = root->next_node;
+
+					while (current != NULL) {
+						// Check for a waiting button event from this node
+						buf[0] = I2C_CMD_GET_BUTTON;
+						i2c_transfer7(I2C1, current->i2c_address, (uint8_t*) &buf, 1, (uint8_t*) &buf, 1);
+
+						// If we saw a button event, act on it
+						if ( buf[0] ) {
+							// Update timekeeping
+							time.bytes[last_node_index - current->node_index]++;
+							srtc_update_from_bytes(&time);
+							current->display_data = time.bytes[last_node_index - current->node_index];
+
+							// Temporarily set transition type to default
+							buf[0] = I2C_CMD_SET_TRANSITION_TYPE;
+							buf[1] = TRANSITION_TYPE_DEFAULT;
+							i2c_transfer7(I2C1, current->i2c_address, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+							current->transition_type = TRANSITION_TYPE_DEFAULT;
+
+							// Update display data for this node
+							buf[0] = I2C_CMD_SET_DISPLAY_DATA;
+							buf[1] = current->display_data;
+							i2c_transfer7(I2C1, current->i2c_address, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+
+							// Stall for one millisecond to ensure the display update finishes
+							temp = time.milliseconds + 1;
+							while (temp != time.milliseconds)
+								__asm__("nop");
+
+							// Reset transition type
+							buf[0] = I2C_CMD_SET_TRANSITION_TYPE;
+							buf[1] = TRANSITION_TYPE_FADE;
+							i2c_transfer7(I2C1, current->i2c_address, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+							current->transition_type = TRANSITION_TYPE_FADE;
+						}
+
+						// Update node display data if necessary
+						if ( current->display_data != time.bytes[last_node_index - current->node_index]) {
+							current->display_data = time.bytes[last_node_index - current->node_index];
+
+							buf[0] = I2C_CMD_SET_DISPLAY_DATA;
+							buf[1] = current->display_data;
+							i2c_transfer7(I2C1, current->i2c_address, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
+						}
+
+						current = current->next_node;
+					}
+				}
 			}
 		}
 	}

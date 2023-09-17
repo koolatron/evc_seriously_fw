@@ -15,5 +15,6 @@ typedef struct stime_t {
 } stime_t;
 
 void srtc_update(volatile stime_t* time);
+void srtc_update_from_bytes(volatile stime_t* time);
 
 #endif

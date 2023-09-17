@@ -5,7 +5,7 @@ node_t* add_node(void) {
     return new_node;
 }
 
-uint8_t last_node_index(node_t* root) {
+uint8_t get_last_node_index(node_t* root) {
     uint8_t last_index;
     node_t* node;
 

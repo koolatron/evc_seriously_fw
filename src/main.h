@@ -71,7 +71,7 @@
 #define T_STEP_PERIOD       20      // Length of each step in milliseconds
 
 // Button constants
-#define BUTTON_MAX          20
+#define BUTTON_MAX          50
 #define BUTTON_MIN          0
 
 // Interrupt flags, status, and buffers
@@ -115,8 +115,6 @@ static void service_display(void);
 
 static void service_button(void);
 static uint8_t button_state(void);
-
-static uint8_t should_update_node(uint8_t index);
 
 #ifdef PROFILE_ISR
 volatile uint32_t cycle_counter;

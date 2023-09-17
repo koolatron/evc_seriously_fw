@@ -41,6 +41,6 @@ typedef struct node {
 } node_t;
 
 node_t* add_node(void);
-uint8_t last_node_index(node_t* root);
+uint8_t get_last_node_index(node_t* root);
 
 #endif // _ANSIBLE_H
