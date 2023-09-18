@@ -71,7 +71,7 @@
 #define T_STEP_PERIOD       20      // Length of each step in milliseconds
 
 // Button constants
-#define BUTTON_MAX          50
+#define BUTTON_MAX          150
 #define BUTTON_MIN          0
 
 // Interrupt flags, status, and buffers

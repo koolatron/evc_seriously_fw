@@ -397,28 +397,20 @@ static void service_display(void) {
 }
 
 static uint8_t button_state(void) {
-	if ( button == true ) {
-		button = false;
-		button_counter = BUTTON_MIN;
-
-		return true;
-	}
-
-	return false;
+	return button;
 }
 
 static void service_button(void) {
-	if ( gpio_get(SWPORT, SWPIN) ) {
-		button_counter = BUTTON_MIN;
+	if ( ! gpio_get(SWPORT, SWPIN) ) {
+		button_counter = BUTTON_MAX;
+		button = true;
 	} else {
-		if ( button_counter < BUTTON_MAX )
-			button_counter++;
+		if (button_counter == 0)
+			button = false;
 	}
 
-	if ( button_counter == BUTTON_MAX ) {
-		button = true;
-		button_counter = BUTTON_MIN;
-	}
+	if ( button_counter > 0 )
+		button_counter--;
 }
 
 void sys_tick_handler(void) {
@@ -810,11 +802,14 @@ int main(void) {
 
 			if (time.milliseconds == 0) {
 				gpio_toggle(LEDPORT, LEDPIN);
-				fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
+				//fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
 			}
 
 			if ( role == ROLE_LEADER ) {
-				if ( ( time.milliseconds % 250 ) == 0) {
+				if ( ( time.milliseconds == 0) || 
+					 ( time.milliseconds == 250 ) || 
+					 ( time.milliseconds == 500 ) ||
+					 ( time.milliseconds == 750 ) ) {
 
 					// For each node:
 					//   Check for button presses
@@ -822,7 +817,7 @@ int main(void) {
 					//   If node needs update:
 					//     Update node display
 
-					// Process root node first, since it doesn't require any I2C chatter
+					// Deal with root node as a special case, since it doesn't require any I2C chatter
 					if ( button_state() == true ) {
 						time.bytes[last_node_index]++;
 						srtc_update_from_bytes(&time);
