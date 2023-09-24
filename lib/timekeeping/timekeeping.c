@@ -42,5 +42,6 @@ void srtc_update_from_bytes(volatile stime_t* time) {
     time->minutes = (time->bytes[2] * 10) + time->bytes[3];
     time->hours   = (time->bytes[0] * 10) + time->bytes[1];
 
-    srtc_update(time);
+    if (time->hours >= 24)
+        time->hours = 20;
 }

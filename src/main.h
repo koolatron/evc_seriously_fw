@@ -96,7 +96,7 @@ volatile uint8_t button;
 
 // Root node for device state.  The root node is always the local device,
 // and the only device with more than one entry in this list is the leader
-node_t* root;
+volatile node_t* root;
 
 static void clock_setup(void);
 static void timer_setup(void);

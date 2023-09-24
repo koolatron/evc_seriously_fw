@@ -98,8 +98,8 @@ static void gpio_setup(void)
 	gpio_mode_setup(I2CPORT_SDA, GPIO_MODE_AF, GPIO_PUPD_NONE, I2CPIN_SDA);
 	gpio_set_output_options(I2CPORT_SCL, GPIO_OTYPE_OD, GPIO_OSPEED_100MHZ, I2CPIN_SCL);
 	gpio_set_output_options(I2CPORT_SDA, GPIO_OTYPE_OD, GPIO_OSPEED_100MHZ, I2CPIN_SDA);
-    gpio_set_af(I2CPORT_SCL, GPIO_AF4, I2CPIN_SCL);
-    gpio_set_af(I2CPORT_SDA, GPIO_AF4, I2CPIN_SDA);
+	gpio_set_af(I2CPORT_SCL, GPIO_AF4, I2CPIN_SCL);
+	gpio_set_af(I2CPORT_SDA, GPIO_AF4, I2CPIN_SDA);
 }
 
 static FILE* usart_setup(void)
@@ -802,14 +802,14 @@ int main(void) {
 
 			if (time.milliseconds == 0) {
 				gpio_toggle(LEDPORT, LEDPIN);
-				//fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
+				fprintf(fp, "[run] Tick (%02d)\n", time.seconds);
 			}
 
 			if ( role == ROLE_LEADER ) {
-				if ( ( time.milliseconds == 0) || 
-					 ( time.milliseconds == 250 ) || 
-					 ( time.milliseconds == 500 ) ||
-					 ( time.milliseconds == 750 ) ) {
+				if ( ( time.milliseconds == 10) ||
+					 ( time.milliseconds == 260 ) ||
+					 ( time.milliseconds == 510 ) ||
+					 ( time.milliseconds == 760 ) ) {
 
 					// For each node:
 					//   Check for button presses
@@ -823,7 +823,6 @@ int main(void) {
 						srtc_update_from_bytes(&time);
 
 						root->transition_type = TRANSITION_TYPE_DEFAULT;
-
 						root->display_data = time.bytes[last_node_index];
 
 						// Stall for one millisecond to ensure the display update finishes
@@ -865,8 +864,8 @@ int main(void) {
 							buf[1] = current->display_data;
 							i2c_transfer7(I2C1, current->i2c_address, (uint8_t*) &buf, 2, (uint8_t*) &buf, 0);
 
-							// Stall for one millisecond to ensure the display update finishes
-							temp = time.milliseconds + 1;
+							// Stall for two milliseconds to ensure the display update finishes
+							temp = time.milliseconds + 2;
 							while (temp != time.milliseconds)
 								__asm__("nop");
 
